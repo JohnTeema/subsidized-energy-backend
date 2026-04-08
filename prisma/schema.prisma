@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  password      String
+  walletAddress String   @unique
+  createdAt     DateTime @default(now())
+
+  inverters     InverterConnection[]
+  readings      EnergyReading[]
+}
+
+model InverterConnection {
+  id         String   @id @default(cuid())
+  userId     String
+  inverterId String   @unique
+  brand      String
+  apiKey     String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  user     User            @relation(fields: [userId], references: [id])
+  readings EnergyReading[]
+}
+
+model EnergyReading {
+  id              String   @id @default(cuid())
+  inverterId      String
+  userId          String
+  kwhProduced     Float
+  intervalStart   DateTime
+  intervalEnd     DateTime
+  rawDataHash     String
+  validated       Boolean  @default(false)
+  validationError String?
+  txHash          String?
+  onChainRecordId Int?
+  subMinted       Float?
+  sreMinted       Float?
+  createdAt       DateTime @default(now())
+
+  inverter InverterConnection @relation(fields: [inverterId], references: [id])
+  user     User               @relation(fields: [userId], references: [id])
+}
