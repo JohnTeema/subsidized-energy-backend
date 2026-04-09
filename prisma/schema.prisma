@@ -19,13 +19,14 @@ model User {
 }
 
 model InverterConnection {
-  id         String   @id @default(cuid())
-  userId     String
-  inverterId String   @unique
-  brand      String
-  apiKey     String
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  userId      String
+  inverterId  String   @unique
+  brand       String
+  apiKey      String   @default("")
+  credentials String   @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
 
   user     User            @relation(fields: [userId], references: [id])
   readings EnergyReading[]

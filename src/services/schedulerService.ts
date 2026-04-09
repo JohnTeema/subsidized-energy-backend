@@ -1,8 +1,9 @@
 import cron from 'node-cron';
 import prisma from '../db/client';
-import { generateReading } from './mockSimulator';
 import { validateReading } from './validationEngine';
-import { recordProduction, hashRawData } from './blockchainService';
+import { recordProduction } from './blockchainService';
+import { getAdapter } from '../adapters';
+import { decryptCredentials } from '../utils/credentialsCrypto';
 
 export interface SimulateResult {
   inverterId: string;
@@ -20,7 +21,6 @@ export interface SimulateResult {
 export async function runSimulationCycle(): Promise<SimulateResult[]> {
   const results: SimulateResult[] = [];
 
-  // Get all active inverter connections with their users
   const connections = await prisma.inverterConnection.findMany({
     where: { isActive: true },
     include: { user: true },
@@ -30,6 +30,9 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
     console.log('[scheduler] No active inverter connections found');
     return results;
   }
+
+  const intervalEnd = new Date();
+  const intervalStart = new Date(intervalEnd.getTime() - 15 * 60 * 1000);
 
   for (const conn of connections) {
     const result: SimulateResult = {
@@ -41,26 +44,45 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
     };
 
     try {
-      // 1. Generate mock reading
-      const reading = generateReading(conn.inverterId);
-      result.kwhProduced = reading.kwhProduced;
+      // Decrypt credentials for this inverter
+      const credentials = decryptCredentials(conn.credentials);
+      const adapter = getAdapter(conn.brand);
 
-      // 2. Validate
-      const validation = await validateReading(reading, conn.id);
+      console.log(`[scheduler] Fetching energy for ${conn.inverterId} via ${conn.brand} adapter`);
+
+      const reading = await adapter.fetchEnergy(
+        credentials,
+        conn.inverterId,
+        conn.userId,
+        intervalStart,
+        intervalEnd,
+      );
+
+      result.kwhProduced = reading.kwh_produced;
+
+      // Build the SimulatedReading-compatible shape for validationEngine
+      const simulatedReading = {
+        inverterId: conn.inverterId,
+        kwhProduced: reading.kwh_produced,
+        intervalStart,
+        intervalEnd,
+        rawData: { ...reading } as Record<string, unknown>,
+      };
+
+      // Validate
+      const validation = await validateReading(simulatedReading, conn.id);
       result.validated = validation.valid;
       result.validationError = validation.error;
 
-      const rawDataHash = hashRawData(reading.rawData);
-
-      // 3. Persist reading (regardless of validity, for audit trail)
+      // Persist reading (regardless of validity, for audit trail)
       const saved = await prisma.energyReading.create({
         data: {
           inverterId: conn.id,
           userId: conn.userId,
-          kwhProduced: reading.kwhProduced,
-          intervalStart: reading.intervalStart,
-          intervalEnd: reading.intervalEnd,
-          rawDataHash,
+          kwhProduced: reading.kwh_produced,
+          intervalStart,
+          intervalEnd,
+          rawDataHash: reading.raw_hash,
           validated: validation.valid,
           validationError: validation.error ?? null,
         },
@@ -72,18 +94,17 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
         continue;
       }
 
-      // 4. Submit to blockchain
-      console.log(`[scheduler] Submitting ${reading.kwhProduced} kWh to blockchain for ${conn.user.walletAddress}`);
+      // Submit to blockchain
+      console.log(`[scheduler] Submitting ${reading.kwh_produced} kWh to blockchain for ${conn.user.walletAddress}`);
       const onChain = await recordProduction(
         conn.user.walletAddress,
         conn.inverterId,
-        reading.kwhProduced,
-        reading.intervalStart,
-        reading.intervalEnd,
-        rawDataHash,
+        reading.kwh_produced,
+        intervalStart,
+        intervalEnd,
+        reading.raw_hash,
       );
 
-      // 5. Update DB record with on-chain data
       await prisma.energyReading.update({
         where: { id: saved.id },
         data: {
@@ -102,7 +123,7 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
       console.log(`[scheduler] Recorded on-chain. tx=${onChain.txHash} recordId=${onChain.recordId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[scheduler] Error processing inverter ${conn.inverterId}: ${msg}`);
+      console.error(`[scheduler] Error processing inverter ${conn.inverterId} (${conn.brand}): ${msg}`);
       result.validationError = msg;
     }
 
@@ -113,9 +134,8 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
 }
 
 export function startScheduler(): void {
-  // Run every 15 minutes
   cron.schedule('*/15 * * * *', async () => {
-    console.log('[scheduler] Running scheduled simulation cycle...');
+    console.log('[scheduler] Running polling cycle...');
     await runSimulationCycle();
   });
 
