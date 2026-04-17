@@ -1,0 +1,362 @@
+{
+  "address": "E93p3yX6mxswv1yBn6gcZvsPCqckyupUVQKuk6YLNyYR",
+  "metadata": {
+    "name": "energy_registry",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Subsidized Energy Protocol — Energy Registry Program"
+  },
+  "instructions": [
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "networkState",
+          "writable": true
+        },
+        {
+          "name": "systemProgram"
+        }
+      ],
+      "args": [
+        {
+          "name": "subMint",
+          "type": "pubkey"
+        },
+        {
+          "name": "sreMint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "recordProduction",
+      "discriminator": [
+        163,
+        114,
+        92,
+        28,
+        253,
+        121,
+        126,
+        53
+      ],
+      "accounts": [
+        {
+          "name": "producer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "networkState",
+          "writable": true
+        },
+        {
+          "name": "productionRecord",
+          "writable": true
+        },
+        {
+          "name": "producerRecord",
+          "writable": true
+        },
+        {
+          "name": "subMint",
+          "writable": true
+        },
+        {
+          "name": "sreMint",
+          "writable": true
+        },
+        {
+          "name": "producerSubAccount",
+          "writable": true
+        },
+        {
+          "name": "producerSreAccount",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram"
+        },
+        {
+          "name": "associatedTokenProgram"
+        },
+        {
+          "name": "systemProgram"
+        }
+      ],
+      "args": [
+        {
+          "name": "inverterIdHash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "intervalStart",
+          "type": "i64"
+        },
+        {
+          "name": "kwhProduced",
+          "type": "u64"
+        },
+        {
+          "name": "intervalEnd",
+          "type": "i64"
+        },
+        {
+          "name": "rawDataHash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "updateAuthority",
+      "discriminator": [
+        32,
+        46,
+        64,
+        28,
+        149,
+        75,
+        243,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "networkState",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "newAuthority",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "NetworkState",
+      "discriminator": [
+        212,
+        237,
+        148,
+        56,
+        97,
+        245,
+        51,
+        169
+      ]
+    },
+    {
+      "name": "ProductionRecord",
+      "discriminator": [
+        176,
+        44,
+        108,
+        196,
+        234,
+        130,
+        43,
+        228
+      ]
+    },
+    {
+      "name": "ProducerRecord",
+      "discriminator": [
+        94,
+        130,
+        197,
+        255,
+        242,
+        22,
+        24,
+        214
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ZeroProduction",
+      "msg": "Production amount must be greater than zero"
+    },
+    {
+      "code": 6001,
+      "name": "ExceedsMaxProduction",
+      "msg": "Production amount exceeds maximum (1 GWh per record)"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidInterval",
+      "msg": "Interval end must be after interval start"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidMint",
+      "msg": "Mint address does not match protocol configuration"
+    },
+    {
+      "code": 6004,
+      "name": "Unauthorized",
+      "msg": "Only the protocol authority can perform this action"
+    }
+  ],
+  "types": [
+    {
+      "name": "NetworkState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "subMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "sreMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "totalKwh",
+            "type": "u64"
+          },
+          {
+            "name": "totalProducers",
+            "type": "u64"
+          },
+          {
+            "name": "totalSubMinted",
+            "type": "u64"
+          },
+          {
+            "name": "totalSreMinted",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProductionRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "producer",
+            "type": "pubkey"
+          },
+          {
+            "name": "inverterIdHash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "kwhProduced",
+            "type": "u64"
+          },
+          {
+            "name": "intervalStart",
+            "type": "i64"
+          },
+          {
+            "name": "intervalEnd",
+            "type": "i64"
+          },
+          {
+            "name": "rawDataHash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "recordedAt",
+            "type": "i64"
+          },
+          {
+            "name": "subMinted",
+            "type": "u64"
+          },
+          {
+            "name": "sreMinted",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProducerRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "producer",
+            "type": "pubkey"
+          },
+          {
+            "name": "totalKwh",
+            "type": "u64"
+          },
+          {
+            "name": "totalSubMinted",
+            "type": "u64"
+          },
+          {
+            "name": "totalSreMinted",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

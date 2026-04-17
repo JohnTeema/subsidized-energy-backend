@@ -1,11 +1,13 @@
 import { Router, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { getBalances } from '../services/blockchainService';
+import { getBalances } from '../services/blockchainRouter';
 
 const router = Router();
 
 router.get('/summary', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const chain = req.query.chain as string | undefined;
+
   const readings = await prisma.energyReading.findMany({
     where: { userId: req.userId!, validated: true },
   });
@@ -13,15 +15,11 @@ router.get('/summary', requireAuth, async (req: AuthRequest, res: Response): Pro
   const totalKwh = readings.reduce((sum, r) => sum + r.kwhProduced, 0);
   const totalReadings = readings.length;
 
-  // Get on-chain token balances
-  let subBalance = '0';
-  let sreBalance = '0';
+  let balances: { base?: { sub: string; sre: string }; solana?: { sub: string; sre: string } } = {};
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId! } });
     if (user) {
-      const balances = await getBalances(user.walletAddress);
-      subBalance = balances.sub;
-      sreBalance = balances.sre;
+      balances = await getBalances(user.walletAddress, chain);
     }
   } catch (err) {
     console.error('[energy/summary] Could not fetch on-chain balances:', err);
@@ -30,8 +28,10 @@ router.get('/summary', requireAuth, async (req: AuthRequest, res: Response): Pro
   res.json({
     totalKwhProduced: parseFloat(totalKwh.toFixed(4)),
     totalReadings,
-    subBalance,
-    sreBalance,
+    balances,
+    // Flat fields for backwards compatibility (prefer Base, fallback to Solana)
+    subBalance: balances.base?.sub ?? balances.solana?.sub ?? '0',
+    sreBalance: balances.base?.sre ?? balances.solana?.sre ?? '0',
   });
 });
 

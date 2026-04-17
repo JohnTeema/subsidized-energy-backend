@@ -14,4 +14,12 @@ export const config = {
     sreToken: process.env.SRE_TOKEN_ADDRESS || '',
     energyRegistry: process.env.ENERGY_REGISTRY_ADDRESS || '',
   },
+
+  solana: {
+    rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+    privateKey: process.env.SOLANA_PRIVATE_KEY || '',
+    programId: process.env.SOLANA_ENERGY_REGISTRY || 'E93p3yX6mxswv1yBn6gcZvsPCqckyupUVQKuk6YLNyYR',
+  },
+
+  activeChains: (process.env.ACTIVE_CHAINS || 'base,solana').split(',').map(s => s.trim()) as Array<'base' | 'solana'>,
 };

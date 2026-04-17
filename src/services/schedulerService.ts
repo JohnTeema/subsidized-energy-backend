@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import prisma from '../db/client';
 import { validateReading } from './validationEngine';
-import { recordProduction } from './blockchainService';
+import { recordProduction } from './blockchainRouter';
 import { getAdapter } from '../adapters';
 import { decryptCredentials } from '../utils/credentialsCrypto';
 
@@ -94,8 +94,8 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
         continue;
       }
 
-      // Submit to blockchain
-      console.log(`[scheduler] Submitting ${reading.kwh_produced} kWh to blockchain for ${conn.user.walletAddress}`);
+      // Submit to blockchain(s)
+      console.log(`[scheduler] Submitting ${reading.kwh_produced} kWh to chains: ${process.env.ACTIVE_CHAINS || 'base,solana'}`);
       const onChain = await recordProduction(
         conn.user.walletAddress,
         conn.inverterId,
@@ -105,22 +105,26 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
         reading.raw_hash,
       );
 
+      console.log(`[scheduler] Recorded on chains: [${onChain.chains.join(', ')}]`);
+
+      // Persist whichever chain(s) succeeded (prefer Base for stored fields)
+      const baseResult = onChain.base;
+      const solanaResult = onChain.solana;
+
       await prisma.energyReading.update({
         where: { id: saved.id },
         data: {
-          txHash: onChain.txHash,
-          onChainRecordId: onChain.recordId,
-          subMinted: parseFloat(onChain.subMinted),
-          sreMinted: parseFloat(onChain.sreMinted),
+          txHash: baseResult?.txHash ?? solanaResult?.txSignature ?? null,
+          onChainRecordId: baseResult?.recordId ?? null,
+          subMinted: parseFloat(baseResult?.subMinted ?? solanaResult?.subMinted ?? '0'),
+          sreMinted: parseFloat(baseResult?.sreMinted ?? solanaResult?.sreMinted ?? '0'),
         },
       });
 
-      result.txHash = onChain.txHash;
-      result.recordId = onChain.recordId;
-      result.subBalance = onChain.subMinted;
-      result.sreBalance = onChain.sreMinted;
-
-      console.log(`[scheduler] Recorded on-chain. tx=${onChain.txHash} recordId=${onChain.recordId}`);
+      result.txHash = baseResult?.txHash ?? solanaResult?.txSignature;
+      result.recordId = baseResult?.recordId;
+      result.subBalance = baseResult?.subMinted ?? solanaResult?.subMinted;
+      result.sreBalance = baseResult?.sreMinted ?? solanaResult?.sreMinted;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[scheduler] Error processing inverter ${conn.inverterId} (${conn.brand}): ${msg}`);

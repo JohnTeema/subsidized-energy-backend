@@ -2,10 +2,16 @@ import './config/env';
 import app from './app';
 import { config } from './config/env';
 import { initBlockchain } from './services/blockchainService';
+import { initSolanaBlockchain } from './services/solanaBlockchainService';
 import { startScheduler } from './services/schedulerService';
 
 async function main() {
-  initBlockchain();
+  if (config.activeChains.includes('base')) {
+    initBlockchain();
+  }
+  if (config.activeChains.includes('solana')) {
+    initSolanaBlockchain();
+  }
   startScheduler();
 
   app.listen(config.port, () => {
