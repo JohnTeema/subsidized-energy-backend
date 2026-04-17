@@ -37,7 +37,12 @@ export function initSolanaBlockchain(): void {
 
   let secretKey: number[];
   if (config.solana.privateKey) {
-    secretKey = JSON.parse(config.solana.privateKey);
+    const raw = config.solana.privateKey.trim();
+    try {
+      secretKey = JSON.parse(raw);
+    } catch {
+      secretKey = raw.split(',').map((n) => parseInt(n.trim(), 10));
+    }
   } else {
     const keyPath = path.join(process.env.HOME || '', '.config', 'solana', 'id.json');
     secretKey = JSON.parse(fs.readFileSync(keyPath, 'utf-8'));
