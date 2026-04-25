@@ -1,2 +1,5 @@
 [phases.setup]
 aptPkgs = ["libatomic1"]
+
+[phases.build]
+cmds = ["npm install", "npm run build"]
