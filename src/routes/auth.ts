@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { ethers } from 'ethers';
 import prisma from '../db/client';
 import { config } from '../config/env';
-import { AuthRequest } from '../middleware/auth';
+import { AuthRequest, requireAuth } from '../middleware/auth';
 
 const router = Router();
 
