@@ -7,6 +7,13 @@ import { config } from '../config/env';
 
 const router = Router();
 
+// Helper to validate wallet address (basic)
+function isValidWalletAddress(addr: string): boolean {
+  if (typeof addr !== 'string') return false;
+  // Accept any non-empty string with reasonable length (Solana: ~44, ETH: 42)
+  return addr.length >= 32 && addr.length <= 100;
+}
+
 router.post('/register', async (req: Request, res: Response): Promise<void> => {
   const { email, password, walletAddress } = req.body;
 
@@ -15,13 +22,15 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Validate wallet address if provided, otherwise generate one
+  // Validate walletAddress if provided
   let wallet = walletAddress;
-  if (wallet && !ethers.isAddress(wallet)) {
-    res.status(400).json({ error: 'Invalid wallet address' });
-    return;
-  }
-  if (!wallet) {
+  if (wallet) {
+    if (!isValidWalletAddress(wallet)) {
+      res.status(400).json({ error: 'Invalid wallet address format' });
+      return;
+    }
+  } else {
+    // No wallet provided — generate random ETH wallet (fallback)
     wallet = ethers.Wallet.createRandom().address;
   }
 
@@ -68,6 +77,19 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
   });
 
   res.json({ token, userId: user.id, walletAddress: user.walletAddress });
+});
+
+// Optional: verify token and return user info
+router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.userId! },
+    select: { id: true, email: true, walletAddress: true },
+  });
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  res.json(user);
 });
 
 export default router;
