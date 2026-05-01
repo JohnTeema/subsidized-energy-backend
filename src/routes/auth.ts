@@ -44,15 +44,38 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     }
 
     const hashed = await bcrypt.hash(password, 10);
+
+    // Generate 6-digit verification code (10 min expiry)
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const codeExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
     const user = await prisma.user.create({
-      data: { email, password: hashed, walletAddress: wallet },
+      data: {
+        email,
+        password: hashed,
+        walletAddress: wallet,
+        verificationCode,
+        codeExpiresAt,
+      },
     });
+
+    // Send verification email (non-blocking)
+    try {
+      await sendVerificationEmail(email, verificationCode);
+    } catch (err) {
+      console.error('[verify] Failed to send email:', err);
+    }
 
     const token = jwt.sign({ userId: user.id, walletAddress: user.walletAddress }, config.jwtSecret, {
       expiresIn: '7d',
     });
 
-    res.status(201).json({ token, userId: user.id, walletAddress: user.walletAddress });
+    res.status(201).json({ 
+      token, 
+      userId: user.id, 
+      walletAddress: user.walletAddress,
+      message: 'Check your email for a verification code',
+    });
   } catch (err) {
     console.error('[register] ERROR:', err);
     if (err instanceof Error) {
