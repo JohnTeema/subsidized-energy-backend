@@ -200,4 +200,35 @@ router.post('/resend-code', async (req: Request, res: Response): Promise<void> =
   res.json({ message: 'Verification code sent' });
 });
 
+
+// Export wallet (private key) — JWT protected
+router.get('/wallet/export', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, walletAddress: true },
+  });
+
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  // Get private key from localStorage on frontend? We can't retrieve it server-side.
+  // Instead, return the wallet address; private key stays on client side
+  // Client will package their stored privateKey into the download
+  res.json({
+    address: user.walletAddress,
+    email: user.email,
+    exportedAt: new Date().toISOString(),
+    note: 'Private key is stored locally in your browser. Use your wallet app to import using the backup file.',
+  });
+});
+
+
 export default router;
