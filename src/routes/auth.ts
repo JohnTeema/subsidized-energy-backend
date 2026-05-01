@@ -16,41 +16,49 @@ function isValidWalletAddress(addr: string): boolean {
 }
 
 router.post('/register', async (req: Request, res: Response): Promise<void> => {
-  const { email, password, walletAddress } = req.body;
+  try {
+    const { email, password, walletAddress } = req.body;
 
-  if (!email || !password) {
-    res.status(400).json({ error: 'email and password are required' });
-    return;
-  }
-
-  // Validate walletAddress if provided
-  let wallet = walletAddress;
-  if (wallet) {
-    if (!isValidWalletAddress(wallet)) {
-      res.status(400).json({ error: 'Invalid wallet address format' });
+    if (!email || !password) {
+      res.status(400).json({ error: 'email and password are required' });
       return;
     }
-  } else {
-    // No wallet provided — generate random ETH wallet (fallback)
-    wallet = ethers.Wallet.createRandom().address;
+
+    // Validate walletAddress if provided
+    let wallet = walletAddress;
+    if (wallet) {
+      if (!isValidWalletAddress(wallet)) {
+        res.status(400).json({ error: 'Invalid wallet address format' });
+        return;
+      }
+    } else {
+      // No wallet provided — generate random ETH wallet (fallback)
+      wallet = ethers.Wallet.createRandom().address;
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      res.status(409).json({ error: 'Email already registered' });
+      return;
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: { email, password: hashed, walletAddress: wallet },
+    });
+
+    const token = jwt.sign({ userId: user.id, walletAddress: user.walletAddress }, config.jwtSecret, {
+      expiresIn: '7d',
+    });
+
+    res.status(201).json({ token, userId: user.id, walletAddress: user.walletAddress });
+  } catch (err) {
+    console.error('[register] ERROR:', err);
+    if (err instanceof Error) {
+      console.error('[register] Stack:', err.stack);
+    }
+    res.status(500).json({ error: 'Internal server error', details: err instanceof Error ? err.message : String(err) });
   }
-
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    res.status(409).json({ error: 'Email already registered' });
-    return;
-  }
-
-  const hashed = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({
-    data: { email, password: hashed, walletAddress: wallet },
-  });
-
-  const token = jwt.sign({ userId: user.id, walletAddress: user.walletAddress }, config.jwtSecret, {
-    expiresIn: '7d',
-  });
-
-  res.status(201).json({ token, userId: user.id, walletAddress: user.walletAddress });
 });
 
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
