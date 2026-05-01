@@ -44,8 +44,8 @@ export function initSolanaBlockchain(): void {
       secretKey = raw.split(',').map((n) => parseInt(n.trim(), 10));
     }
   } else {
-    const keyPath = path.join(process.env.HOME || '', '.config', 'solana', 'id.json');
-    secretKey = JSON.parse(fs.readFileSync(keyPath, 'utf-8'));
+    console.error('[solana] SOLANA_PRIVATE_KEY not set — skipping init (non-critical)');
+    throw new Error('SOLANA_PRIVATE_KEY environment variable is required');
   }
   keypair = Keypair.fromSecretKey(Uint8Array.from(secretKey));
 
