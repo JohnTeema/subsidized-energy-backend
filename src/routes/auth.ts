@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { ethers } from 'ethers';
+import { sendVerificationEmail } from '../services/emailService';
 import prisma from '../db/client';
 import { config } from '../config/env';
 import { AuthRequest, requireAuth } from '../middleware/auth';
@@ -99,6 +100,81 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
     return;
   }
   res.json(user);
+});
+
+
+
+// Email verification
+router.post('/verify', async (req: Request, res: Response): Promise<void> => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    res.status(400).json({ error: 'email and code are required' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  if (user.emailVerified) {
+    res.status(200).json({ message: 'Already verified' });
+    return;
+  }
+
+  if (!user.verificationCode || user.verificationCode !== code) {
+    res.status(400).json({ error: 'Invalid verification code' });
+    return;
+  }
+
+  if (!user.codeExpiresAt || new Date() > user.codeExpiresAt) {
+    res.status(400).json({ error: 'Verification code expired' });
+    return;
+  }
+
+  await prisma.user.update({
+    where: { email },
+    data: { emailVerified: true, verificationCode: null, codeExpiresAt: null },
+  });
+
+  res.json({ message: 'Email verified successfully' });
+});
+
+// Resend verification code
+router.post('/resend-code', async (req: Request, res: Response): Promise<void> => {
+  const { email } = req.body;
+
+  if (!email) {
+    res.status(400).json({ error: 'email is required' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  if (user.emailVerified) {
+    res.status(200).json({ message: 'Already verified' });
+    return;
+  }
+
+  // Generate new code (6 digits)
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await prisma.user.update({
+    where: { email },
+    data: { verificationCode: code, codeExpiresAt: expiresAt },
+  });
+
+  // TODO: Send email via Resend
+  console.log(`[verify] Code for ${email}: ${code}`);
+
+  res.json({ message: 'Verification code sent' });
 });
 
 export default router;

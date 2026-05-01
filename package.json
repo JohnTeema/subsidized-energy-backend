@@ -31,7 +31,8 @@
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
     "prisma": "5.22.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "resend": "^4.0.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

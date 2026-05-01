@@ -8,14 +8,17 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  password      String
-  walletAddress String   @unique
-  createdAt     DateTime @default(now())
+  id               String   @id @default(cuid())
+  email            String   @unique
+  password         String
+  walletAddress    String   @unique
+  emailVerified    Boolean  @default(false)
+  verificationCode String?
+  codeExpiresAt    DateTime?
+  createdAt        DateTime @default(now())
 
-  inverters     InverterConnection[]
-  readings      EnergyReading[]
+  inverters        InverterConnection[]
+  readings         EnergyReading[]
 }
 
 model InverterConnection {
