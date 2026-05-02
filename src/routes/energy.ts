@@ -65,4 +65,62 @@ router.get('/history', requireAuth, async (req: AuthRequest, res: Response): Pro
   res.json({ readings, total, limit, offset });
 });
 
+router.get('/chart', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const period = ((req.query.period as string) || 'weekly') as 'daily' | 'weekly' | 'monthly';
+  const now = new Date();
+
+  let since: Date;
+  let buckets: { label: string; kwh: number; tokens: number }[];
+
+  if (period === 'daily') {
+    since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    buckets = Array.from({ length: 24 }, (_, i) => ({
+      label: `${i.toString().padStart(2, '0')}:00`,
+      kwh: 0,
+      tokens: 0,
+    }));
+  } else if (period === 'monthly') {
+    since = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    buckets = Array.from({ length: 30 }, (_, i) => ({ label: `${i + 1}`, kwh: 0, tokens: 0 }));
+  } else {
+    since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    buckets = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(since.getTime() + (i + 1) * 24 * 60 * 60 * 1000);
+      return { label: dayNames[d.getDay()], kwh: 0, tokens: 0 };
+    });
+  }
+
+  const readings = await prisma.energyReading.findMany({
+    where: { userId: req.userId!, intervalEnd: { gte: since } },
+    orderBy: { intervalEnd: 'asc' },
+    select: { kwhProduced: true, intervalEnd: true, sreMinted: true },
+  });
+
+  const msSince = since.getTime();
+  for (const r of readings) {
+    const d = new Date(r.intervalEnd);
+    let idx: number;
+    if (period === 'daily') {
+      idx = d.getHours();
+    } else {
+      const dayOffset = Math.floor((d.getTime() - msSince) / (24 * 60 * 60 * 1000));
+      idx = Math.min(Math.max(dayOffset - (period === 'weekly' ? 0 : 0), 0), buckets.length - 1);
+    }
+    if (idx >= 0 && idx < buckets.length) {
+      buckets[idx].kwh += r.kwhProduced;
+      buckets[idx].tokens += r.sreMinted ?? 0;
+    }
+  }
+
+  res.json({
+    data: buckets.map((b) => ({
+      label: b.label,
+      kwh: parseFloat(b.kwh.toFixed(3)),
+      tokens: parseFloat(b.tokens.toFixed(3)),
+    })),
+    period,
+  });
+});
+
 export default router;
