@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { ethers } from 'ethers';
-import { sendVerificationEmail } from '../services/emailService';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../services/emailService';
 import prisma from '../db/client';
 import { config } from '../config/env';
 import { AuthRequest, requireAuth } from '../middleware/auth';
@@ -200,6 +200,105 @@ router.post('/resend-code', async (req: Request, res: Response): Promise<void> =
   res.json({ message: 'Verification code sent' });
 });
 
+
+// Forgot password — send reset code
+router.post('/forgot-password', async (req: Request, res: Response): Promise<void> => {
+  const { email } = req.body;
+  if (!email) {
+    res.status(400).json({ error: 'email is required' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  // Always respond the same way to prevent email enumeration
+  if (!user) {
+    res.json({ message: 'If that email exists, a reset code has been sent.' });
+    return;
+  }
+
+  // Rate limit: max 3 requests per hour
+  const now = new Date();
+  const windowStart = user.resetWindowStart;
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+
+  let attempts = user.resetAttempts;
+  if (!windowStart || windowStart < oneHourAgo) {
+    // Window expired — reset counter
+    attempts = 0;
+  }
+
+  if (attempts >= 3) {
+    res.status(429).json({ error: 'Too many reset requests. Please wait an hour before trying again.' });
+    return;
+  }
+
+  const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const resetCodeExpiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 minutes
+
+  await prisma.user.update({
+    where: { email },
+    data: {
+      resetCode,
+      resetCodeExpiresAt,
+      resetAttempts: attempts + 1,
+      resetWindowStart: attempts === 0 ? now : (windowStart ?? now),
+    },
+  });
+
+  try {
+    await sendPasswordResetEmail(email, resetCode);
+  } catch (err) {
+    console.error('[forgot-password] Failed to send email:', err);
+  }
+
+  res.json({ message: 'If that email exists, a reset code has been sent.' });
+});
+
+// Reset password — verify code and update password
+router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
+  const { email, code, newPassword } = req.body;
+
+  if (!email || !code || !newPassword) {
+    res.status(400).json({ error: 'email, code, and newPassword are required' });
+    return;
+  }
+
+  if (newPassword.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    res.status(400).json({ error: 'Invalid or expired reset code' });
+    return;
+  }
+
+  if (!user.resetCode || user.resetCode !== code) {
+    res.status(400).json({ error: 'Invalid reset code' });
+    return;
+  }
+
+  if (!user.resetCodeExpiresAt || new Date() > user.resetCodeExpiresAt) {
+    res.status(400).json({ error: 'Reset code has expired. Please request a new one.' });
+    return;
+  }
+
+  const hashed = await bcrypt.hash(newPassword, 10);
+
+  await prisma.user.update({
+    where: { email },
+    data: {
+      password: hashed,
+      resetCode: null,
+      resetCodeExpiresAt: null,
+      resetAttempts: 0,
+      resetWindowStart: null,
+    },
+  });
+
+  res.json({ message: 'Password reset successfully' });
+});
 
 // Export wallet (private key) — JWT protected
 router.get('/wallet/export', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
