@@ -9,8 +9,8 @@ export async function sendPasswordResetEmail(email: string, code: string): Promi
     return;
   }
 
-  await resend.emails.send({
-    from: 'SubEnergy <onboarding@resend.dev>',
+  const { data, error } = await resend.emails.send({
+    from: 'Subsidized Energy <onboarding@resend.dev>',
     to: email,
     subject: 'Reset your SubEnergy password',
     html: `
@@ -23,7 +23,11 @@ export async function sendPasswordResetEmail(email: string, code: string): Promi
       </div>
     `,
   });
-  console.log(`[email] Sent password reset code to ${email}`);
+  if (error) {
+    console.error('[email] Resend error (password reset):', JSON.stringify(error));
+    throw new Error(error.message);
+  }
+  console.log(`[email] Sent password reset code to ${email} — id: ${data?.id}`);
 }
 
 export async function sendVerificationEmail(email: string, code: string): Promise<void> {
@@ -33,8 +37,8 @@ export async function sendVerificationEmail(email: string, code: string): Promis
   }
 
   try {
-    await resend.emails.send({
-      from: 'SubEnergy <onboarding@resend.dev>',
+    const { data, error } = await resend.emails.send({
+      from: 'Subsidized Energy <onboarding@resend.dev>',
       to: email,
       subject: 'Verify your SubEnergy email',
       html: `
@@ -47,7 +51,11 @@ export async function sendVerificationEmail(email: string, code: string): Promis
         </div>
       `,
     });
-    console.log(`[email] Sent verification code to ${email}`);
+    if (error) {
+      console.error('[email] Resend error (verification):', JSON.stringify(error));
+      throw new Error(error.message);
+    }
+    console.log(`[email] Sent verification code to ${email} — id: ${data?.id}`);
   } catch (err) {
     console.error('[email] Failed to send:', err);
     throw err;
