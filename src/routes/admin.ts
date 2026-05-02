@@ -137,4 +137,16 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+router.get('/esg-buyers', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const buyers = await prisma.esgBuyer.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ buyers, total: buyers.length });
+  } catch (err) {
+    console.error('[admin/esg-buyers] Error:', err);
+    res.status(500).json({ error: 'Failed to fetch ESG buyers' });
+  }
+});
+
 export default router;

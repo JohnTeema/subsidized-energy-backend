@@ -58,3 +58,15 @@ model EnergyReading {
   inverter InverterConnection @relation(fields: [inverterId], references: [id])
   user     User               @relation(fields: [userId], references: [id])
 }
+
+model EsgBuyer {
+  id               String   @id @default(cuid())
+  organizationName String
+  companyId        String
+  country          String
+  industry         String
+  contactEmail     String
+  walletAddress    String   @unique
+  annualTarget     Float?
+  createdAt        DateTime @default(now())
+}
