@@ -1,6 +1,7 @@
 import { Resend } from 'resend';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+console.log('[email] Resend initialized:', !!resend);
 
 export async function sendPasswordResetEmail(email: string, code: string): Promise<void> {
   if (!resend) {

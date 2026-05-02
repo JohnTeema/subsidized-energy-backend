@@ -247,8 +247,9 @@ router.post('/forgot-password', async (req: Request, res: Response): Promise<voi
 
   try {
     await sendPasswordResetEmail(email, resetCode);
+    console.log(`[forgot-password] Email dispatched to ${email}`);
   } catch (err) {
-    console.error('[forgot-password] Failed to send email:', err);
+    console.error('[forgot-password] EMAIL SEND FAILED for', email, '—', err);
   }
 
   res.json({ message: 'If that email exists, a reset code has been sent.' });
