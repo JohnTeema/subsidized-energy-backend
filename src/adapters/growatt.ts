@@ -43,6 +43,51 @@ interface GrowattInstance {
   ): Promise<{ datas?: GrowattHistoryEntry[] }>;
 }
 
+interface AxiosError {
+  response?: { status?: number; data?: unknown };
+  config?: { url?: string; method?: string; data?: string; params?: unknown };
+  message?: string;
+}
+
+function maskPassword(data: string | undefined): string {
+  if (!data) return '(empty)';
+  try {
+    const parsed = new URLSearchParams(data);
+    const out: Record<string, string> = {};
+    for (const [k, v] of parsed.entries()) {
+      out[k] = (k === 'password' || k === 'passwordCrc') ? `${v.slice(0, 4)}****` : v;
+    }
+    return JSON.stringify(out);
+  } catch {
+    return data.slice(0, 40) + '…';
+  }
+}
+
+function addGrowattInterceptors(growatt: GrowattInstance): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ax = (growatt as any).axios;
+  if (!ax) return;
+
+  ax.interceptors.request.use((config: { url?: string; method?: string; data?: string; params?: unknown }) => {
+    console.log('[Growatt] →', config.method?.toUpperCase(), config.url, '| body:', maskPassword(config.data), '| params:', JSON.stringify(config.params ?? {}));
+    return config;
+  });
+
+  ax.interceptors.response.use(
+    (res: { status: number; config: { url?: string } }) => {
+      console.log('[Growatt] ←', res.status, res.config?.url);
+      return res;
+    },
+    (err: AxiosError) => {
+      console.error('[Growatt] ✗', err.config?.method?.toUpperCase(), err.config?.url,
+        '| status:', err.response?.status,
+        '| body:', JSON.stringify(err.response?.data ?? null),
+        '| msg:', err.message);
+      return Promise.reject(err);
+    },
+  );
+}
+
 // Rate limit: 50 requests/hour per account
 const hourlyCallCounts = new Map<string, { count: number; resetAt: number }>();
 const MAX_HOURLY_CALLS = 50;
@@ -82,8 +127,19 @@ export class GrowattAdapter implements InverterAdapter {
 
     checkRateLimit(username);
 
+    console.log(`[Growatt] fetchEnergy: user=${username} pass=${password.slice(0, 3)}*** inverterId=${inverterId}`);
+
     const growatt = new Growatt({ indexCate: '1' });
-    const loginResult = await growatt.login(username, password);
+    addGrowattInterceptors(growatt);
+
+    let loginResult: { userId?: string; errCode?: number; errMsg?: string };
+    try {
+      loginResult = await growatt.login(username, password);
+    } catch (err) {
+      const e = err as AxiosError;
+      console.error('[Growatt] login threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+      throw err;
+    }
     incrementCallCount(username, 1);
 
     if (loginResult.errCode && loginResult.errCode !== 0) {
@@ -99,9 +155,17 @@ export class GrowattAdapter implements InverterAdapter {
 
     try {
       // Get all plant data
-      const plants = await growatt.getAllPlantData({ plantData: true, deviceData: false, weather: false });
+      let plants: Record<string, GrowattPlant & { devices?: GrowattDevice[] }>;
+      try {
+        plants = await growatt.getAllPlantData({ plantData: true, deviceData: false, weather: false });
+      } catch (err) {
+        const e = err as AxiosError;
+        console.error('[Growatt] getAllPlantData threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+        throw err;
+      }
       incrementCallCount(username, 1);
       const plantEntries = Object.values(plants);
+      console.log('[Growatt] plants found:', plantEntries.length, plantEntries.map(p => ({ id: p.plantId, name: p.plantName })));
 
       if (plantEntries.length > 0) {
         const plant = plantEntries[0];
@@ -110,17 +174,33 @@ export class GrowattAdapter implements InverterAdapter {
         lng = plant.lng ?? 0;
 
         // Get devices for the first plant
-        const devicesRes = await growatt.getDevicesByPlant(plant.plantId);
+        let devicesRes: { datas?: GrowattDevice[] };
+        try {
+          devicesRes = await growatt.getDevicesByPlant(plant.plantId);
+        } catch (err) {
+          const e = err as AxiosError;
+          console.error('[Growatt] getDevicesByPlant threw:', e.message, '| plantId:', plant.plantId, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+          throw err;
+        }
         incrementCallCount(username, 1);
         const devices = devicesRes?.datas ?? [];
+        console.log('[Growatt] devices found:', devices.length, devices.map(d => ({ sn: d.sn, type: d.deviceType })));
 
         if (devices.length > 0) {
           const device = devices[0];
           // Type 1 = inverter (MIX, SPH, etc.)
-          const history = await growatt.getHistory(1, device.sn, intervalStart, intervalEnd, 0, true);
+          let history: { datas?: GrowattHistoryEntry[] };
+          try {
+            history = await growatt.getHistory(1, device.sn, intervalStart, intervalEnd, 0, true);
+          } catch (err) {
+            const e = err as AxiosError;
+            console.error('[Growatt] getHistory threw:', e.message, '| sn:', device.sn, '| start:', intervalStart, '| end:', intervalEnd, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+            throw err;
+          }
           incrementCallCount(username, 1);
           const entries = history?.datas ?? [];
           rawData = { plant, device, historyCount: entries.length };
+          console.log('[Growatt] history entries:', entries.length);
 
           // Sum power readings over interval → approximate kWh
           // eAcToday is cumulative daily kWh; take the last value's increment
@@ -158,8 +238,18 @@ export class GrowattAdapter implements InverterAdapter {
     if (!username || !password) throw new Error('Growatt requires username and password');
 
     checkRateLimit(username);
+    console.log(`[Growatt] fetchSiteDetails: user=${username} pass=${password.slice(0, 3)}***`);
     const growatt = new Growatt({ indexCate: '1' });
-    const loginResult = await growatt.login(username, password);
+    addGrowattInterceptors(growatt);
+
+    let loginResult: { userId?: string; errCode?: number; errMsg?: string };
+    try {
+      loginResult = await growatt.login(username, password);
+    } catch (err) {
+      const e = err as AxiosError;
+      console.error('[Growatt] login threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+      throw err;
+    }
     incrementCallCount(username, 1);
 
     const userId = loginResult.userId ?? '';
@@ -172,6 +262,10 @@ export class GrowattAdapter implements InverterAdapter {
         latitude: plant?.lat ?? 0,
         longitude: plant?.lng ?? 0,
       };
+    } catch (err) {
+      const e = err as AxiosError;
+      console.error('[Growatt] fetchSiteDetails data call threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+      throw err;
     } finally {
       try { await growatt.logout(userId); } catch { /* ignore */ }
     }
@@ -184,7 +278,9 @@ export class GrowattAdapter implements InverterAdapter {
 
     try {
       checkRateLimit(username);
+      console.log(`[Growatt] testConnection: user=${username} pass=${password.slice(0, 3)}***`);
       const growatt = new Growatt({ indexCate: '1' });
+      addGrowattInterceptors(growatt);
       const loginResult = await growatt.login(username, password);
       incrementCallCount(username, 1);
 
@@ -194,6 +290,8 @@ export class GrowattAdapter implements InverterAdapter {
       try { await growatt.logout(loginResult.userId ?? ''); } catch { /* ignore */ }
       return { success: true, message: 'Growatt connection verified' };
     } catch (err) {
+      const e = err as AxiosError;
+      console.error('[Growatt] testConnection threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
       return { success: false, message: `Growatt connection failed: ${String(err)}` };
     }
   }
