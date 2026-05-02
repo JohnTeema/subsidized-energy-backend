@@ -1,10 +1,9 @@
 import { Resend } from 'resend';
-import * as fs from 'fs';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 export async function sendPasswordResetEmail(email: string, code: string): Promise<void> {
-  if (!process.env.RESEND_API_KEY) {
+  if (!resend) {
     console.warn('[email] RESEND_API_KEY not set — skipping password reset email');
     console.log(`[email] Password reset code for ${email}: ${code}`);
     return;
@@ -28,7 +27,7 @@ export async function sendPasswordResetEmail(email: string, code: string): Promi
 }
 
 export async function sendVerificationEmail(email: string, code: string): Promise<void> {
-  if (!process.env.RESEND_API_KEY) {
+  if (!resend) {
     console.warn('[email] RESEND_API_KEY not set — skipping email send');
     return;
   }
