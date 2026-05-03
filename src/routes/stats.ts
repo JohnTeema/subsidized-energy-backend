@@ -15,11 +15,9 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     const totalKwh = kwhResult._sum.kwhProduced ?? 0;
 
     res.json({
-      totalKwhVerified: parseFloat(totalKwh.toFixed(4)),
+      totalKwh: parseFloat(totalKwh.toFixed(4)),
       activeProducers: activeInvertersCount,
-      totalSubMinted: parseFloat((subResult._sum.subMinted ?? 0).toFixed(4)),
-      totalSreMinted: parseFloat((sreResult._sum.sreMinted ?? 0).toFixed(4)),
-      co2OffsetKg: parseFloat((totalKwh * 0.43).toFixed(2)),
+      carbonOffset: parseFloat((totalKwh * 0.43).toFixed(2)),
     });
   } catch (err) {
     console.error('[stats] Error:', err);
