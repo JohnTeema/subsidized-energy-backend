@@ -36,6 +36,8 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
     ]);
 
     const totalKwhProduced = parseFloat((kwhRows[0]?.total ?? 0).toFixed(4));
+    const srePointsSum = (await prisma.user.aggregate({ _sum: { srePoints: true } })). _sum;
+    const totalSrePointsDistributed = srePointsSum?.srePoints ?? 0;
 
     res.json({
       totalUsers,
@@ -44,6 +46,7 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       activeInverters,
       totalEnergyReadings,
       totalKwhProduced,
+      totalSrePointsDistributed,
       invertersByBrand: invertersByBrand.map((b) => ({ brand: b.brand, count: b._count.id })),
     });
   } catch (err) {
@@ -61,6 +64,7 @@ router.get('/users', async (_req: Request, res: Response): Promise<void> => {
         walletAddress: true,
         emailVerified: true,
         createdAt: true,
+        srePoints: true,
         inverters: {
           select: {
             id: true,
