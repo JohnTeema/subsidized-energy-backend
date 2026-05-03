@@ -4,6 +4,7 @@ import prisma from '../db/client';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { getAdapter, SUPPORTED_BRANDS, BRAND_CREDENTIAL_FIELDS } from '../adapters';
 import { encryptCredentials } from '../utils/credentialsCrypto';
+import { awardSrePoints } from '../services/srePointsService';
 
 const router = Router();
 
@@ -74,6 +75,14 @@ router.post('/connect', requireAuth, async (req: AuthRequest, res: Response): Pr
       credentials: encryptedCredentials,
       isActive: true,
     },
+  });
+
+  // Award 3 SRE points for connecting an inverter
+  await awardSrePoints({
+    userId: req.userId!,
+    amount: 3,
+    reason: 'inverter_connection_bonus',
+    meta: { inverterId: connection.id, brand },
   });
 
   res.status(201).json({

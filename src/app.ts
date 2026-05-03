@@ -7,6 +7,7 @@ import devRoutes from './routes/dev';
 import statsRoutes from './routes/stats';
 import marketplaceRoutes from './routes/marketplace';
 import adminRoutes from './routes/admin';
+import userRoutes from './routes/user';
 
 const ALLOWED_ORIGINS = [
   'https://subsidized-energy-solana-dapp.vercel.app',
@@ -27,6 +28,7 @@ app.use('/api/dev', devRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/user', userRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

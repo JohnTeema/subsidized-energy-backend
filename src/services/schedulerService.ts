@@ -5,6 +5,7 @@ import { recordProduction } from './blockchainRouter';
 import { getAdapter } from '../adapters';
 import { decryptCredentials } from '../utils/credentialsCrypto';
 import * as crypto from 'crypto';
+import { awardSrePoints, calculateDailyProductionPoints } from './srePointsService';
 
 export interface SimulateResult {
   inverterId: string;
@@ -118,6 +119,9 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
     return results;
   }
 
+  // Total number of active producers (used for emission curve multiplier)
+  const totalProducers = connections.length;
+
   const todayUtc = new Date();
   todayUtc.setUTCHours(0, 0, 0, 0);
 
@@ -204,6 +208,20 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
           onChainRecordId: baseResult?.recordId ?? null,
           subMinted: parseFloat(baseResult?.subMinted ?? solanaResult?.subMinted ?? '0'),
           sreMinted: parseFloat(baseResult?.sreMinted ?? solanaResult?.sreMinted ?? '0'),
+        },
+      });
+
+      // Award SRE points for today's production using emission curve
+      const productionPoints = calculateDailyProductionPoints(dailyKwh, totalProducers);
+      await awardSrePoints({
+        userId: conn.userId,
+        amount: productionPoints,
+        reason: 'daily_production',
+        meta: {
+          inverterId: conn.inverterId,
+          dailyKwh,
+          totalProducers,
+          date: todayUtc.toISOString().split('T')[0],
         },
       });
 

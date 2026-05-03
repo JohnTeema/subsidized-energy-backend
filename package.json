@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "seed": "tsx scripts/seed.ts",
+    "award:bonus": "tsx scripts/award-retroactive-bonus.ts",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "postinstall": "prisma migrate deploy"

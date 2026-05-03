@@ -4,8 +4,19 @@ import { config } from './config/env';
 import { initBlockchain } from './services/blockchainService';
 import { initSolanaBlockchain } from './services/solanaBlockchainService';
 import { startScheduler } from './services/schedulerService';
+import { awardRetroactiveInverterBonuses } from './services/srePointsService';
 
 async function main() {
+  // Optional one-time retroactive bonus for existing users with active inverters
+  if (process.env.RUN_RETROACTIVE_BONUS === 'true') {
+    try {
+      const count = await awardRetroactiveInverterBonuses();
+      console.log(`[server] Retroactive SRE bonus awarded to ${count} users`);
+    } catch (err) {
+      console.error('[server] Retroactive bonus failed:', err);
+    }
+  }
+
   // Initialize blockchain services — but don't crash the server if they fail
   if (config.activeChains.includes('base')) {
     try {
