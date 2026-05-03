@@ -48,9 +48,9 @@ export async function validateReading(
     return { valid: false, error: `kWh ${reading.kwhProduced} exceeds max capacity ${MAX_CAPACITY_KWH_PER_15MIN}` };
   }
 
-  // 5. Non-negative check — production cannot be negative
-  if (reading.kwhProduced < 0) {
-    return { valid: false, error: 'kWh produced cannot be negative' };
+  // 5. Non-negative check — production cannot be negative or zero
+  if (reading.kwhProduced <= 0) {
+    return { valid: false, error: 'kWh produced must be greater than zero' };
   }
 
   return { valid: true };
