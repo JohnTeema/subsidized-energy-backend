@@ -150,8 +150,7 @@ export async function recordProduction(
       systemProgram: SystemProgram.programId,
     })
     .preInstructions([
-      ComputeBudgetProgram.requestHeapFrame({ bytes: 262144 }),
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }),
     ])
     .rpc();
 
