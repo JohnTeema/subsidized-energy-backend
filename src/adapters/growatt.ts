@@ -18,15 +18,11 @@ lng?: number;
 interface GrowattDevice {
 sn: string;
 deviceType?: number;
-eToday?: number;
-eTotal?: number;
-}
-
-interface GrowattHistoryEntry {
-time: string;
-pvPower?: number;
-eAcToday?: number;
-[key: string]: unknown;
+growattType?: string;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+totalData?: Record<string, any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+statusData?: Record<string, any>;
 }
 
 interface GrowattInstance {
@@ -34,14 +30,6 @@ login(username: string, password: string): Promise<{ userId?: string; errCode?: 
 logout(userId: string): Promise<void>;
 getAllPlantData(options?: Record<string, unknown>): Promise<Record<string, GrowattPlant & { devices?: Record<string, GrowattDevice> }>>;
 getDevicesByPlant(plantId: string | number): Promise<{ datas?: GrowattDevice[] }>;
-getHistory(
-type: string,
-sn: string,
-startDate: Date,
-endDate: Date,
-start: number,
-allDatasets: boolean,
-): Promise<{ datas?: GrowattHistoryEntry[] }>;
 }
 
 interface AxiosError {
@@ -155,74 +143,67 @@ let lng = 0;
 let rawData: Record<string, unknown> = {};
 
 try {
-// Get all plant data
-let plants: Record<string, GrowattPlant & { devices?: Record<string, GrowattDevice> }>;
-try {
-plants = await growatt.getAllPlantData({ plantData: true, deviceData: false, weather: false });
-} catch (err) {
-const e = err as AxiosError;
-console.error('[Growatt] getAllPlantData threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
-throw err;
-}
-incrementCallCount(username, 1);
-      // DEBUG: Log raw plants response (truncated to avoid huge logs)
-      console.log('[Growatt] raw plants response (truncated):', JSON.stringify(plants).substring(0, 2000));
+	let plants: Record<string, GrowattPlant & { devices?: Record<string, GrowattDevice> }>;
+	try {
+		plants = await growatt.getAllPlantData({ plantData: true, deviceData: false, weather: false });
+	} catch (err) {
+		const e = err as AxiosError;
+		console.error('[Growatt] getAllPlantData threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
+		throw err;
+	}
+	incrementCallCount(username, 1);
+	console.log('[Growatt] raw plants response (truncated):', JSON.stringify(plants).substring(0, 2000));
 
-      const plantIds = Object.keys(plants);
-      const plantSummary = plantIds.map(id => ({ id: plants[id].id, name: plants[id].plantName }));
-      console.log('[Growatt] plants found:', plantIds.length, plantSummary);
+	const plantIds = Object.keys(plants);
+	console.log('[Growatt] plants found:', plantIds.length, plantIds.map(id => ({ id: plants[id].id, name: plants[id].plantName })));
 
-      if (plantIds.length === 0) {
-        throw new Error('No plants found in Growatt account');
-      }
+	if (plantIds.length === 0) {
+		throw new Error('No plants found in Growatt account');
+	}
 
-      // Use first plant
-      const plant = plants[plantIds[0]];
-      peakPower = plant.peakPower ?? 5.0;
-      lat = plant.lat ?? 0;
-      lng = plant.lng ?? 0;
+	const plant = plants[plantIds[0]];
+	peakPower = plant.peakPower ?? 5.0;
+	lat = plant.lat ?? 0;
+	lng = plant.lng ?? 0;
 
-      // Devices are already populated from getAllPlantData (via getAllPlantDeviceData)
-      const devices = plant.devices;
-      if (!devices || Object.keys(devices).length === 0) {
-        throw new Error('No devices found for plant');
-      }
+	const devices = plant.devices;
+	if (!devices || Object.keys(devices).length === 0) {
+		throw new Error('No devices found for plant');
+	}
 
-      // Use first device
-      const deviceSn = Object.keys(devices)[0];
-      const deviceData = devices[deviceSn] as any;
+	const deviceSn = Object.keys(devices)[0];
+	const deviceData = devices[deviceSn];
+	const totalData = deviceData.totalData ?? {};
+	const statusData = deviceData.statusData ?? {};
 
-      // Determine device type (growattType) e.g., 'storage', 'inv', 'mix', etc.
-      const growattType = deviceData.growattType as string | undefined;
-      if (!growattType) {
-        console.warn('[Growatt] device growattType missing, defaulting to inv');
-      }
+	// epvToday is the actual solar PV production today — API returns it as a string
+	kwhProduced = parseFloat(String(totalData.epvToday ?? 0)) || 0;
 
-      // Fetch history for the specific interval using the correct device type
-      let history: { datas?: GrowattHistoryEntry[] };
-      try {
-        const typeParam = growattType || 'inv';
-        history = await growatt.getHistory(typeParam, deviceSn, intervalStart, intervalEnd, 0, true);
-      } catch (err) {
-        const e = err as AxiosError;
-        console.error('[Growatt] getHistory threw:', e.message, '| type:', growattType, '| sn:', deviceSn, '| start:', intervalStart, '| end:', intervalEnd, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
-        throw err;
-      }
-      incrementCallCount(username, 1);
-      const entries = history?.datas ?? [];
-      rawData = { plant, device: deviceData, historyCount: entries.length };
-      console.log('[Growatt] history entries:', entries.length);
+	// If epvToday is 0 or negligible, check panelPower — if panels are actively producing,
+	// estimate kWh from instantaneous watts × interval duration
+	if (kwhProduced < 0.001) {
+		const panelPowerW = parseFloat(String(statusData.panelPower ?? 0)) || 0;
+		if (panelPowerW > 0) {
+			const intervalHours = (intervalEnd.getTime() - intervalStart.getTime()) / 3_600_000;
+			kwhProduced = (panelPowerW / 1000) * intervalHours;
+			console.log(`[Growatt] epvToday=0 but panelPower=${panelPowerW}W active — estimated ${kwhProduced.toFixed(4)} kWh from power × interval`);
+		}
+	}
 
-      // Sum kWh from cumulative eAcToday field (works for both inverter and storage)
-      if (entries.length > 0) {
-        const first = entries[0];
-        const last = entries[entries.length - 1];
-        const firstKwh = parseFloat(String(first.eAcToday ?? 0));
-        const lastKwh = parseFloat(String(last.eAcToday ?? 0));
-        kwhProduced = Math.max(0, lastKwh - firstKwh);
-      }
+	rawData = {
+		plant: { id: plant.id, name: plant.plantName, peakPower },
+		device: { sn: deviceSn, growattType: deviceData.growattType },
+		epvToday: parseFloat(String(totalData.epvToday ?? 0)) || 0,
+		epvTotal: parseFloat(String(totalData.epvTotal ?? 0)) || 0,
+		panelPower: parseFloat(String(statusData.panelPower ?? 0)) || 0,
+		loadPower: parseFloat(String(statusData.loadPower ?? 0)) || 0,
+		batteryCapacity: parseFloat(String(statusData.batteryCapacity ?? statusData.capacity ?? 0)) || 0,
+		vBat: parseFloat(String(statusData.vBat ?? 0)) || 0,
+	};
+
+	console.log(`[Growatt] kWh produced: ${kwhProduced} (epvToday=${totalData.epvToday}, panelPower=${statusData.panelPower}W, epvTotal=${totalData.epvTotal})`);
 } finally {
-try { await growatt.logout(userId); } catch { /* ignore */ }
+	try { await growatt.logout(userId); } catch { /* ignore */ }
 }
 
 const rawHash = crypto.createHash('sha256').update(JSON.stringify(rawData)).digest('hex');
