@@ -5,8 +5,8 @@ const router = Router();
 
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const [activeInvertersCount, kwhRows] = await Promise.all([
-      prisma.inverterConnection.count({ where: { isActive: true } }),
+    const [activeProducersCount, kwhRows] = await Promise.all([
+      prisma.user.count({ where: { inverters: { some: { isActive: true } } } }),
       // SUM of MAX(kwhProduced) per inverter per day — epvToday is cumulative so
       // the highest snapshot value for a given day is the real production total
       prisma.$queryRaw<[{ total: number }]>`
@@ -26,7 +26,7 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
 
     res.json({
       totalKwh,
-      activeProducers: activeInvertersCount,
+      activeProducers: activeProducersCount,
       carbonOffset: parseFloat((totalKwh * 0.43).toFixed(2)),
     });
   } catch (err) {

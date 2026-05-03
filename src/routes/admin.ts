@@ -15,7 +15,7 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       kwhRows,
     ] = await Promise.all([
       prisma.user.count(),
-      prisma.user.count({ where: { emailVerified: true } }),
+      prisma.user.count({ where: { inverters: { some: { isActive: true } } } }),
       prisma.inverterConnection.count(),
       prisma.inverterConnection.count({ where: { isActive: true } }),
       prisma.energyReading.count(),
