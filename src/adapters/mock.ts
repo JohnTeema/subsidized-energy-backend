@@ -27,6 +27,14 @@ export class MockAdapter implements InverterAdapter {
       latitude: 0,
       longitude: 0,
       raw_hash: rawHash,
+      panel_power: reading.rawData.powerW as number,
+      battery_capacity: 90,
+      battery_voltage: 48,
+      epv_total: 1000,
+      epv_today: reading.kwhProduced,
+      device_serial: 'MOCK-001',
+      plant_name: 'Mock Plant',
+      location: 'Simulated Location',
     };
   }
 

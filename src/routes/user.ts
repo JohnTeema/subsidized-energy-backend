@@ -4,99 +4,89 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
-/**
- * GET /api/user/dashboard
- * Returns authenticated user's dashboard data including:
- * - srePoints: current SRE points balance
- * - totalKwhProduced: maximum daily kWh produced (sum of daily_max readings)
- * - subCertificates: count of daily_total readings
- * - latestReading: most recent snapshot with kWh, panelPower (rawData fields), timestamp
- * - dailyReadings: today's snapshots for chart (date, cumulative kWh)
- * - environmentalImpact: co2Avoided, treesEquivalent, drivingOffset, homesPowered
- */
 router.get('/dashboard', requireAuth, async (_req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = _req.userId!;
 
-    // Fetch user with srePoints
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { srePoints: true },
     });
-
     if (!user) {
       res.status(404).json({ error: 'User not found' });
       return;
     }
 
-    // Total kWh produced: sum of all daily_total reading values
-    const totalKwhResult = await prisma.energyReading.aggregate({
-      where: { userId, readingType: 'daily_total' },
-      _sum: { kwhProduced: true },
+    const inverter = await prisma.inverterConnection.findFirst({
+      where: { userId, isActive: true },
     });
-    const totalKwhProduced = totalKwhResult._sum.kwhProduced ?? 0;
 
-    // Sub certificates: count of daily_total readings
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    // All of today's snapshots, oldest → newest
+    const todaySnapshots = inverter
+      ? await prisma.energyReading.findMany({
+          where: {
+            userId,
+            inverterId: inverter.id,
+            readingType: 'snapshot',
+            intervalStart: { gte: todayStart },
+          },
+          orderBy: { intervalStart: 'asc' },
+          select: {
+            intervalStart: true,
+            kwhProduced: true,
+            panelPower: true,
+            batteryCapacity: true,
+            batteryVoltage: true,
+            epvTotal: true,
+            epvToday: true,
+          },
+        })
+      : [];
+
+    // Latest snapshot carries the current real-time values
+    const latest = todaySnapshots.length > 0 ? todaySnapshots[todaySnapshots.length - 1] : null;
+
+    const todayKwh = latest?.epvToday ?? 0;
+    const lifetimeKwh = latest?.epvTotal ?? 0;
+    const currentPanelPower = latest?.panelPower ?? 0;
+    const batteryCapacity = latest?.batteryCapacity ?? 0;
+    const batteryVoltage = latest?.batteryVoltage ?? 0;
+
     const subCertificates = await prisma.energyReading.count({
       where: { userId, readingType: 'daily_total' },
     });
 
-    // Latest reading (most recent snapshot, not daily_total)
-    const latestReading = await prisma.energyReading.findFirst({
-      where: { userId, readingType: 'snapshot' },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        kwhProduced: true,
-        rawData: true,
-        intervalStart: true,
-        createdAt: true,
-      },
-    });
-
-    // Today's snapshots for chart (cumulative kWh by time)
-    const todayStart = new Date();
-    todayStart.setUTCHours(0, 0, 0, 0);
-    const todaySnapshots = await prisma.energyReading.findMany({
-      where: {
-        userId,
-        readingType: 'snapshot',
-        intervalStart: { gte: todayStart },
-      },
-      orderBy: { intervalStart: 'asc' },
-      select: {
-        intervalStart: true,
-        kwhProduced: true,
-      },
-    });
-
-    const dailyReadings = todaySnapshots.map(s => ({
-      time: s.intervalStart.toISOString().substring(11, 16), // HH:MM
-      kwh: s.kwhProduced,
-    }));
-
-    // Environmental impact calculations (using standard conversion factors)
-    const co2Avoided = totalKwhProduced * 0.5; // kg CO2 (0.5 kg/kWh grid average)
-    const treesEquivalent = co2Avoided / 20; // 1 tree absorbs ~20 kg CO2/year
-    const drivingOffset = co2Avoided / 0.2; // km (avg car: 0.2 kg CO2/km)
-    const homesPowered = totalKwhProduced / 30; // avg home uses ~30 kWh/day equivalent
+    const co2AvoidedKg = todayKwh * 0.43;
 
     res.json({
       srePoints: user.srePoints,
-      totalKwhProduced: Math.round(totalKwhProduced * 100) / 100,
+      todayKwh: Math.round(todayKwh * 100) / 100,
+      lifetimeKwh: Math.round(lifetimeKwh * 100) / 100,
+      currentPanelPower: Math.round(currentPanelPower),
+      batteryCapacity: Math.round(batteryCapacity * 10) / 10,
+      batteryVoltage: Math.round(batteryVoltage * 10) / 10,
       subCertificates,
-      latestReading: latestReading
+      connectedInverter: inverter
         ? {
-            kWh: latestReading.kwhProduced,
-            panelPower: (latestReading.rawData as any)?.ac_power ?? null,
-            timestamp: latestReading.createdAt,
+            brand: inverter.brand,
+            deviceId: inverter.deviceSerial ?? inverter.inverterId,
+            plantName: inverter.plantName ?? null,
+            location: inverter.location ?? null,
+            isActive: inverter.isActive,
           }
         : null,
-      dailyReadings,
+      todaySnapshots: todaySnapshots.map(s => ({
+        time: s.intervalStart.toISOString().substring(11, 16), // HH:MM
+        kwh: Math.round((s.epvToday ?? s.kwhProduced) * 100) / 100,
+      })),
       environmentalImpact: {
-        co2Avoided: Math.round(co2Avoided * 100) / 100,
-        treesEquivalent: Math.round(treesEquivalent * 100) / 100,
-        drivingOffset: Math.round(drivingOffset * 100) / 100,
-        homesPowered: Math.round(homesPowered * 100) / 100,
+        co2AvoidedKg: Math.round(co2AvoidedKg * 100) / 100,
+        treesEquivalent: Math.round((co2AvoidedKg / 21) * 1000) / 1000,
+        drivingOffsetKm: Math.round((co2AvoidedKg / 0.21) * 10) / 10,
+        homesPowered: Math.round((todayKwh / 900) * 10000) / 10000,
       },
     });
   } catch (err) {
@@ -106,10 +96,6 @@ router.get('/dashboard', requireAuth, async (_req: AuthRequest, res: Response): 
   }
 });
 
-/**
- * GET /api/user/sre-points-history
- * Returns SRE points log entries for the authenticated user.
- */
 router.get('/sre-points-history', requireAuth, async (_req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = _req.userId!;
@@ -124,7 +110,6 @@ router.get('/sre-points-history', requireAuth, async (_req: AuthRequest, res: Re
         amount: true,
         reason: true,
         createdAt: true,
-        meta: true,
       },
     });
 

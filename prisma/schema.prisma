@@ -36,6 +36,9 @@ model InverterConnection {
   credentials String   @default("{}")
   isActive         Boolean   @default(true)
   lastRecordedDate DateTime?
+  deviceSerial     String?
+  plantName        String?
+  location         String?
   createdAt        DateTime  @default(now())
 
   user     User            @relation(fields: [userId], references: [id])
@@ -57,6 +60,11 @@ model EnergyReading {
   onChainRecordId Int?
   subMinted       Float?
   sreMinted       Float?
+  panelPower      Float?
+  batteryCapacity Float?
+  batteryVoltage  Float?
+  epvTotal        Float?
+  epvToday        Float?
   createdAt       DateTime @default(now())
 
   inverter InverterConnection @relation(fields: [inverterId], references: [id])

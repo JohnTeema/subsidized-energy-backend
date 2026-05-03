@@ -86,8 +86,31 @@ export async function runPollingCycle(): Promise<SimulateResult[]> {
           rawDataHash: reading.raw_hash,
           validated: validation.valid,
           validationError: validation.error ?? null,
+          panelPower: reading.panel_power ?? null,
+          batteryCapacity: reading.battery_capacity ?? null,
+          batteryVoltage: reading.battery_voltage ?? null,
+          epvTotal: reading.epv_total ?? null,
+          epvToday: reading.epv_today ?? null,
         },
       });
+
+      // Keep device metadata on the connection up to date (only writes when fields are missing)
+      if (reading.device_serial || reading.plant_name || reading.location) {
+        const needsUpdate =
+          (!conn.deviceSerial && reading.device_serial) ||
+          (!conn.plantName && reading.plant_name) ||
+          (!conn.location && reading.location);
+        if (needsUpdate) {
+          await prisma.inverterConnection.update({
+            where: { id: conn.id },
+            data: {
+              ...(reading.device_serial && !conn.deviceSerial ? { deviceSerial: reading.device_serial } : {}),
+              ...(reading.plant_name && !conn.plantName ? { plantName: reading.plant_name } : {}),
+              ...(reading.location && !conn.location ? { location: reading.location } : {}),
+            },
+          });
+        }
+      }
 
       if (!validation.valid) {
         console.log(`[scheduler] Reading invalid for ${conn.inverterId}: ${validation.error}`);

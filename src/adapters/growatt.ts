@@ -13,6 +13,9 @@ totalPower?: number;
 peakPower?: number;
 lat?: number;
 lng?: number;
+city?: string;
+country?: string;
+plantAddress?: string;
 }
 
 interface GrowattDevice {
@@ -141,6 +144,9 @@ let peakPower = 5.0;
 let lat = 0;
 let lng = 0;
 let rawData: Record<string, unknown> = {};
+let deviceSerial: string | undefined;
+let plantDisplayName: string | undefined;
+let locationStr: string | undefined;
 
 try {
 	let plants: Record<string, GrowattPlant & { devices?: Record<string, GrowattDevice> }>;
@@ -190,6 +196,14 @@ try {
 		}
 	}
 
+	deviceSerial = deviceSn;
+	plantDisplayName = plant.plantName;
+	const locationParts: string[] = [];
+	if (plant.city) locationParts.push(plant.city);
+	if (plant.country) locationParts.push(plant.country);
+	if (locationParts.length === 0 && plant.plantAddress) locationParts.push(plant.plantAddress);
+	if (locationParts.length > 0) locationStr = locationParts.join(', ');
+
 	rawData = {
 		plant: { id: plant.id, name: plant.plantName, peakPower },
 		device: { sn: deviceSn, growattType: deviceData.growattType },
@@ -219,6 +233,14 @@ rated_capacity_kw: peakPower,
 latitude: lat,
 longitude: lng,
 raw_hash: rawHash,
+panel_power: rawData.panelPower as number,
+battery_capacity: rawData.batteryCapacity as number,
+battery_voltage: rawData.vBat as number,
+epv_total: rawData.epvTotal as number,
+epv_today: rawData.epvToday as number,
+device_serial: deviceSerial,
+plant_name: plantDisplayName,
+location: locationStr,
 };
 }
 

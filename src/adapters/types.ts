@@ -16,6 +16,15 @@ export interface InverterReading {
   latitude: number;
   longitude: number;
   raw_hash: string;
+  // Extended telemetry — populated by adapters that support it
+  panel_power?: number;
+  battery_capacity?: number;
+  battery_voltage?: number;
+  epv_total?: number;
+  epv_today?: number;
+  device_serial?: string;
+  plant_name?: string;
+  location?: string;
 }
 
 export interface SiteDetails {
