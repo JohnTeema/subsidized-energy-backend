@@ -96,7 +96,7 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 50));
     const skip = (page - 1) * limit;
 
-    const [readings, total] = await Promise.all([
+    const [readingsRaw, total] = await Promise.all([
       prisma.energyReading.findMany({
         skip,
         take: limit,
@@ -106,21 +106,47 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
           intervalStart: true,
           intervalEnd: true,
           validated: true,
-          txHash: true,
+          validationError: true,
           subMinted: true,
-          sreMinted: true,
           createdAt: true,
-          inverter: {
-            select: { inverterId: true, brand: true },
-          },
-          user: {
-            select: { email: true },
-          },
+          inverter: { select: { inverterId: true, brand: true } },
+          user: { select: { email: true, walletAddress: true } },
         },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.energyReading.count(),
     ]);
+
+    // Map to frontend EnergyReading shape
+    const readings = readingsRaw.map((r) => {
+      // Derive status from validated + validationError
+      let status: 'verified' | 'flagged' | 'pending';
+      if (r.validated) {
+        status = 'verified';
+      } else if (r.validationError && r.validationError.length > 0) {
+        status = 'flagged';
+      } else {
+        status = 'pending';
+      }
+
+      // Derive CO2 offset — temporary factor (0.5 kg/kWh) until per-plant factor is stored
+      const co2Offset = r.kwhProduced * 0.5;
+
+      // Format date as YYYY-MM-DD for date filter compatibility
+      const date = new Date(r.intervalStart).toISOString().split('T')[0];
+
+      return {
+        id: r.id,
+        producer: r.user.email,
+        producerWallet: r.user.walletAddress,
+        date,
+        kWh: r.kwhProduced,
+        co2Offset,
+        subMinted: r.subMinted ?? 0,
+        status,
+        inverterBrand: r.inverter.brand,
+      };
+    });
 
     res.json({
       readings,
