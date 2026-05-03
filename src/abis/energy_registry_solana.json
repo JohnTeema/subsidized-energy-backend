@@ -4,7 +4,7 @@
     "name": "energy_registry",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "Subsidized Energy Protocol — Energy Registry Program"
+    "description": "Subsidized Energy - Energy Registry Program"
   },
   "instructions": [
     {
@@ -26,26 +26,67 @@
           "signer": true
         },
         {
-          "name": "networkState",
-          "writable": true
+          "name": "network_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "systemProgram"
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
         {
-          "name": "subMint",
+          "name": "sre_mint",
           "type": "pubkey"
         },
         {
-          "name": "sreMint",
+          "name": "treasury",
+          "type": "pubkey"
+        },
+        {
+          "name": "ecosystem",
+          "type": "pubkey"
+        },
+        {
+          "name": "team",
+          "type": "pubkey"
+        },
+        {
+          "name": "marketplace_program",
           "type": "pubkey"
         }
       ]
     },
     {
-      "name": "recordProduction",
+      "name": "record_production",
+      "docs": [
+        "Records a day's energy production for a producer.",
+        "Creates a unique $SUB SPL mint and mints $SRE rewards (70/15/10/5 split).",
+        "Metadata (kWh, CO2, hash) is stored in the ProductionRecord PDA.",
+        "PDA collision on (producer, date) enforces the one-record-per-day rule."
+      ],
       "discriminator": [
         163,
         114,
@@ -63,67 +104,151 @@
           "signer": true
         },
         {
-          "name": "networkState",
-          "writable": true
-        },
-        {
-          "name": "productionRecord",
-          "writable": true
-        },
-        {
-          "name": "producerRecord",
-          "writable": true
-        },
-        {
-          "name": "subMint",
-          "writable": true
-        },
-        {
-          "name": "sreMint",
-          "writable": true
-        },
-        {
-          "name": "producerSubAccount",
-          "writable": true
-        },
-        {
-          "name": "producerSreAccount",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram"
-        },
-        {
-          "name": "associatedTokenProgram"
-        },
-        {
-          "name": "systemProgram"
-        }
-      ],
-      "args": [
-        {
-          "name": "inverterIdHash",
-          "type": {
-            "array": [
-              "u8",
-              32
+          "name": "network_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
             ]
           }
         },
         {
-          "name": "intervalStart",
+          "name": "sub_mint",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "producer_sub_ata",
+          "writable": true
+        },
+        {
+          "name": "sre_mint",
+          "writable": true
+        },
+        {
+          "name": "producer_sre_ata",
+          "writable": true
+        },
+        {
+          "name": "treasury_sre_ata",
+          "writable": true
+        },
+        {
+          "name": "ecosystem_sre_ata",
+          "writable": true
+        },
+        {
+          "name": "team_sre_ata",
+          "writable": true
+        },
+        {
+          "name": "production_record",
+          "docs": [
+            "PDA collision enforces exactly one record per producer per UTC day"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  100,
+                  117,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "producer"
+              },
+              {
+                "kind": "arg",
+                "path": "date_timestamp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "producer_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  100,
+                  117,
+                  99,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "producer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "date_timestamp",
           "type": "i64"
         },
         {
-          "name": "kwhProduced",
+          "name": "inverter_id",
+          "type": "string"
+        },
+        {
+          "name": "kwh_produced",
           "type": "u64"
         },
         {
-          "name": "intervalEnd",
-          "type": "i64"
+          "name": "emission_factor",
+          "type": "u64"
         },
         {
-          "name": "rawDataHash",
+          "name": "raw_data_hash",
           "type": {
             "array": [
               "u8",
@@ -134,7 +259,7 @@
       ]
     },
     {
-      "name": "updateAuthority",
+      "name": "update_authority",
       "discriminator": [
         32,
         46,
@@ -148,16 +273,41 @@
       "accounts": [
         {
           "name": "authority",
-          "signer": true
+          "signer": true,
+          "relations": [
+            "network_state"
+          ]
         },
         {
-          "name": "networkState",
-          "writable": true
+          "name": "network_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
         }
       ],
       "args": [
         {
-          "name": "newAuthority",
+          "name": "new_authority",
           "type": "pubkey"
         }
       ]
@@ -178,6 +328,19 @@
       ]
     },
     {
+      "name": "ProducerRecord",
+      "discriminator": [
+        94,
+        130,
+        197,
+        255,
+        242,
+        22,
+        24,
+        214
+      ]
+    },
+    {
       "name": "ProductionRecord",
       "discriminator": [
         176,
@@ -189,18 +352,20 @@
         43,
         228
       ]
-    },
+    }
+  ],
+  "events": [
     {
-      "name": "ProducerRecord",
+      "name": "ProductionRecorded",
       "discriminator": [
-        94,
-        130,
-        197,
-        255,
-        242,
-        22,
-        24,
-        214
+        43,
+        72,
+        173,
+        37,
+        96,
+        228,
+        88,
+        79
       ]
     }
   ],
@@ -213,22 +378,37 @@
     {
       "code": 6001,
       "name": "ExceedsMaxProduction",
-      "msg": "Production amount exceeds maximum (1 GWh per record)"
+      "msg": "Production exceeds 1 GWh maximum"
     },
     {
       "code": 6002,
-      "name": "InvalidInterval",
-      "msg": "Interval end must be after interval start"
+      "name": "InvalidInverterId",
+      "msg": "Inverter ID exceeds 64 characters"
     },
     {
       "code": 6003,
-      "name": "InvalidMint",
-      "msg": "Mint address does not match protocol configuration"
+      "name": "InvalidEmissionFactor",
+      "msg": "Emission factor must be greater than zero"
     },
     {
       "code": 6004,
+      "name": "InvalidDate",
+      "msg": "date_timestamp must equal today's UTC midnight"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidMint",
+      "msg": "SRE mint does not match network state"
+    },
+    {
+      "code": 6006,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6007,
       "name": "Unauthorized",
-      "msg": "Only the protocol authority can perform this action"
+      "msg": "Unauthorized"
     }
   ],
   "types": [
@@ -242,85 +422,39 @@
             "type": "pubkey"
           },
           {
-            "name": "subMint",
+            "name": "sre_mint",
             "type": "pubkey"
           },
           {
-            "name": "sreMint",
+            "name": "treasury",
             "type": "pubkey"
           },
           {
-            "name": "totalKwh",
-            "type": "u64"
-          },
-          {
-            "name": "totalProducers",
-            "type": "u64"
-          },
-          {
-            "name": "totalSubMinted",
-            "type": "u64"
-          },
-          {
-            "name": "totalSreMinted",
-            "type": "u64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ProductionRecord",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "producer",
+            "name": "ecosystem",
             "type": "pubkey"
           },
           {
-            "name": "inverterIdHash",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
+            "name": "team",
+            "type": "pubkey"
           },
           {
-            "name": "kwhProduced",
+            "name": "marketplace_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_kwh",
             "type": "u64"
           },
           {
-            "name": "intervalStart",
-            "type": "i64"
-          },
-          {
-            "name": "intervalEnd",
-            "type": "i64"
-          },
-          {
-            "name": "rawDataHash",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "recordedAt",
-            "type": "i64"
-          },
-          {
-            "name": "subMinted",
+            "name": "total_producers",
             "type": "u64"
           },
           {
-            "name": "sreMinted",
+            "name": "total_sub_minted",
+            "type": "u64"
+          },
+          {
+            "name": "total_sre_minted",
             "type": "u64"
           },
           {
@@ -340,20 +474,113 @@
             "type": "pubkey"
           },
           {
-            "name": "totalKwh",
+            "name": "total_kwh",
             "type": "u64"
           },
           {
-            "name": "totalSubMinted",
+            "name": "total_sub_minted",
             "type": "u64"
           },
           {
-            "name": "totalSreMinted",
+            "name": "total_sre_minted",
             "type": "u64"
+          },
+          {
+            "name": "last_record_date",
+            "type": "i64"
           },
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProductionRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "producer",
+            "type": "pubkey"
+          },
+          {
+            "name": "sub_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "inverter_id",
+            "type": "string"
+          },
+          {
+            "name": "date_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "kwh_produced",
+            "type": "u64"
+          },
+          {
+            "name": "emission_factor",
+            "type": "u64"
+          },
+          {
+            "name": "co2_kg_scaled",
+            "type": "u64"
+          },
+          {
+            "name": "raw_data_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "sre_minted",
+            "type": "u64"
+          },
+          {
+            "name": "recorded_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProductionRecorded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "producer",
+            "type": "pubkey"
+          },
+          {
+            "name": "sub_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "date_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "kwh_produced",
+            "type": "u64"
+          },
+          {
+            "name": "co2_kg_scaled",
+            "type": "u64"
+          },
+          {
+            "name": "sre_minted",
+            "type": "u64"
           }
         ]
       }

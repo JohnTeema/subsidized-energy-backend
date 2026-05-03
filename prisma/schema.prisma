@@ -32,8 +32,9 @@ model InverterConnection {
   brand       String
   apiKey      String   @default("")
   credentials String   @default("{}")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  isActive         Boolean   @default(true)
+  lastRecordedDate DateTime?
+  createdAt        DateTime  @default(now())
 
   user     User            @relation(fields: [userId], references: [id])
   readings EnergyReading[]

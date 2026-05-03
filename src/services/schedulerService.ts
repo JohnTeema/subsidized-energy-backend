@@ -4,6 +4,7 @@ import { validateReading } from './validationEngine';
 import { recordProduction } from './blockchainRouter';
 import { getAdapter } from '../adapters';
 import { decryptCredentials } from '../utils/credentialsCrypto';
+import * as crypto from 'crypto';
 
 export interface SimulateResult {
   inverterId: string;
@@ -18,7 +19,9 @@ export interface SimulateResult {
   sreBalance?: string;
 }
 
-export async function runSimulationCycle(): Promise<SimulateResult[]> {
+// Polls all active inverters and saves readings to the database.
+// Does NOT write to the blockchain — that happens once per day via runDailyRecording().
+export async function runPollingCycle(): Promise<SimulateResult[]> {
   const results: SimulateResult[] = [];
 
   const connections = await prisma.inverterConnection.findMany({
@@ -44,7 +47,6 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
     };
 
     try {
-      // Decrypt credentials for this inverter
       const credentials = decryptCredentials(conn.credentials);
       const adapter = getAdapter(conn.brand);
 
@@ -60,7 +62,6 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
 
       result.kwhProduced = reading.kwh_produced;
 
-      // Build the SimulatedReading-compatible shape for validationEngine
       const simulatedReading = {
         inverterId: conn.inverterId,
         kwhProduced: reading.kwh_produced,
@@ -69,13 +70,11 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
         rawData: { ...reading } as Record<string, unknown>,
       };
 
-      // Validate
       const validation = await validateReading(simulatedReading, conn.id);
       result.validated = validation.valid;
       result.validationError = validation.error;
 
-      // Persist reading (regardless of validity, for audit trail)
-      const saved = await prisma.energyReading.create({
+      await prisma.energyReading.create({
         data: {
           inverterId: conn.id,
           userId: conn.userId,
@@ -90,44 +89,10 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
 
       if (!validation.valid) {
         console.log(`[scheduler] Reading invalid for ${conn.inverterId}: ${validation.error}`);
-        results.push(result);
-        continue;
       }
-
-      // Submit to blockchain(s)
-      console.log(`[scheduler] Submitting ${reading.kwh_produced} kWh to chains: ${process.env.ACTIVE_CHAINS || 'base,solana'}`);
-      const onChain = await recordProduction(
-        conn.user.walletAddress,
-        conn.inverterId,
-        reading.kwh_produced,
-        intervalStart,
-        intervalEnd,
-        reading.raw_hash,
-      );
-
-      console.log(`[scheduler] Recorded on chains: [${onChain.chains.join(', ')}]`);
-
-      // Persist whichever chain(s) succeeded (prefer Base for stored fields)
-      const baseResult = onChain.base;
-      const solanaResult = onChain.solana;
-
-      await prisma.energyReading.update({
-        where: { id: saved.id },
-        data: {
-          txHash: baseResult?.txHash ?? solanaResult?.txSignature ?? null,
-          onChainRecordId: baseResult?.recordId ?? null,
-          subMinted: parseFloat(baseResult?.subMinted ?? solanaResult?.subMinted ?? '0'),
-          sreMinted: parseFloat(baseResult?.sreMinted ?? solanaResult?.sreMinted ?? '0'),
-        },
-      });
-
-      result.txHash = baseResult?.txHash ?? solanaResult?.txSignature;
-      result.recordId = baseResult?.recordId;
-      result.subBalance = baseResult?.subMinted ?? solanaResult?.subMinted;
-      result.sreBalance = baseResult?.sreMinted ?? solanaResult?.sreMinted;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[scheduler] Error processing inverter ${conn.inverterId} (${conn.brand}): ${msg}`);
+      console.error(`[scheduler] Error polling inverter ${conn.inverterId} (${conn.brand}): ${msg}`);
       result.validationError = msg;
     }
 
@@ -137,11 +102,140 @@ export async function runSimulationCycle(): Promise<SimulateResult[]> {
   return results;
 }
 
-export function startScheduler(): void {
-  cron.schedule('*/15 * * * *', async () => {
-    console.log('[scheduler] Running polling cycle...');
-    await runSimulationCycle();
+// Aggregates today's validated readings and submits one on-chain record per inverter.
+// Skips inverters that have already been recorded today.
+export async function runDailyRecording(): Promise<SimulateResult[]> {
+  const results: SimulateResult[] = [];
+
+  const connections = await prisma.inverterConnection.findMany({
+    where: { isActive: true },
+    include: { user: true },
   });
 
-  console.log('[scheduler] Cron started — runs every 15 minutes');
+  if (connections.length === 0) {
+    console.log('[scheduler:daily] No active inverter connections found');
+    return results;
+  }
+
+  const todayUtc = new Date();
+  todayUtc.setUTCHours(0, 0, 0, 0);
+
+  for (const conn of connections) {
+    const result: SimulateResult = {
+      inverterId: conn.id,
+      userId: conn.userId,
+      walletAddress: conn.user.walletAddress,
+      kwhProduced: 0,
+      validated: false,
+    };
+
+    try {
+      // Skip if we already minted $SUB for this inverter today
+      if (conn.lastRecordedDate) {
+        const lastDate = new Date(conn.lastRecordedDate);
+        lastDate.setUTCHours(0, 0, 0, 0);
+        if (lastDate.getTime() === todayUtc.getTime()) {
+          console.log(`[scheduler:daily] ${conn.inverterId} already recorded today — skipping`);
+          continue;
+        }
+      }
+
+      // Sum all validated readings for today
+      const todayEnd = new Date(todayUtc.getTime() + 24 * 60 * 60 * 1000);
+      const readings = await prisma.energyReading.findMany({
+        where: {
+          inverterId: conn.id,
+          validated: true,
+          intervalStart: { gte: todayUtc, lt: todayEnd },
+        },
+      });
+
+      if (readings.length === 0) {
+        console.log(`[scheduler:daily] No validated readings today for ${conn.inverterId} — skipping`);
+        continue;
+      }
+
+      const totalKwh = readings.reduce((sum, r) => sum + r.kwhProduced, 0);
+      result.kwhProduced = totalKwh;
+      result.validated = true;
+
+      // Deterministic hash of all today's raw data hashes combined
+      const combinedHash = crypto
+        .createHash('sha256')
+        .update(readings.map((r) => r.rawDataHash).join(''))
+        .digest('hex');
+
+      const intervalStart = readings[0].intervalStart;
+      const intervalEnd = readings[readings.length - 1].intervalEnd;
+
+      console.log(
+        `[scheduler:daily] Recording ${totalKwh.toFixed(3)} kWh on-chain for ${conn.inverterId} ` +
+        `(${readings.length} readings, chains: ${process.env.ACTIVE_CHAINS || 'base,solana'})`,
+      );
+
+      const onChain = await recordProduction(
+        conn.user.walletAddress,
+        conn.inverterId,
+        totalKwh,
+        intervalStart,
+        intervalEnd,
+        combinedHash,
+      );
+
+      console.log(`[scheduler:daily] Recorded on chains: [${onChain.chains.join(', ')}]`);
+
+      const baseResult = onChain.base;
+      const solanaResult = onChain.solana;
+
+      // Tag the most recent reading with on-chain data; others remain as audit trail
+      const latestReading = readings[readings.length - 1];
+      await prisma.energyReading.update({
+        where: { id: latestReading.id },
+        data: {
+          txHash: baseResult?.txHash ?? solanaResult?.txSignature ?? null,
+          onChainRecordId: baseResult?.recordId ?? null,
+          subMinted: parseFloat(baseResult?.subMinted ?? solanaResult?.subMinted ?? '0'),
+          sreMinted: parseFloat(baseResult?.sreMinted ?? solanaResult?.sreMinted ?? '0'),
+        },
+      });
+
+      // Mark inverter as recorded for today
+      await prisma.inverterConnection.update({
+        where: { id: conn.id },
+        data: { lastRecordedDate: new Date() },
+      });
+
+      result.txHash = baseResult?.txHash ?? solanaResult?.txSignature;
+      result.recordId = baseResult?.recordId;
+      result.subBalance = baseResult?.subMinted ?? solanaResult?.subMinted;
+      result.sreBalance = baseResult?.sreMinted ?? solanaResult?.sreMinted;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[scheduler:daily] Error recording inverter ${conn.inverterId}: ${msg}`);
+      result.validationError = msg;
+    }
+
+    results.push(result);
+  }
+
+  return results;
+}
+
+// Keep legacy export so dev/admin routes that call runSimulationCycle() still work
+export const runSimulationCycle = runPollingCycle;
+
+export function startScheduler(): void {
+  // Every 15 minutes: poll inverters and save readings to DB
+  cron.schedule('*/15 * * * *', async () => {
+    console.log('[scheduler] Running polling cycle...');
+    await runPollingCycle();
+  });
+
+  // Once per day at 23:58 UTC: aggregate readings and mint $SUB on-chain
+  cron.schedule('58 23 * * *', async () => {
+    console.log('[scheduler:daily] Running daily on-chain recording...');
+    await runDailyRecording();
+  }, { timezone: 'UTC' });
+
+  console.log('[scheduler] Cron started — polls every 15 min, records on-chain daily at 23:58 UTC');
 }

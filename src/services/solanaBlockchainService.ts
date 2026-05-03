@@ -14,9 +14,6 @@ import {
   getAssociatedTokenAddress,
   getAccount,
 } from '@solana/spl-token';
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 import { config } from '../config/env';
 import EnergyRegistryIdl from '../abis/energy_registry_solana.json';
 
@@ -26,6 +23,8 @@ let keypair: Keypair;
 let program: anchor.Program<any>;
 
 const PROGRAM_ID = new PublicKey('E93p3yX6mxswv1yBn6gcZvsPCqckyupUVQKuk6YLNyYR');
+// Grid-average CO₂ emission factor in grams per kWh
+const EMISSION_FACTOR = 500;
 
 export interface SolanaRecordResult {
   txSignature: string;
@@ -63,36 +62,46 @@ export function getSolanaWalletAddress(): string {
   return keypair?.publicKey.toBase58() ?? '';
 }
 
-async function getNetworkState(): Promise<{ subMint: PublicKey; sreMint: PublicKey }> {
+async function getNetworkState(): Promise<{
+  sreMint: PublicKey;
+  treasury: PublicKey;
+  ecosystem: PublicKey;
+  team: PublicKey;
+}> {
   const [networkStatePda] = PublicKey.findProgramAddressSync(
     [Buffer.from('network_state')],
     PROGRAM_ID,
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const state = await (program.account as any).networkState.fetch(networkStatePda) as any;
-  return { subMint: state.subMint as PublicKey, sreMint: state.sreMint as PublicKey };
+  return {
+    sreMint: state.sreMint as PublicKey,
+    treasury: state.treasury as PublicKey,
+    ecosystem: state.ecosystem as PublicKey,
+    team: state.team as PublicKey,
+  };
 }
 
 export async function recordProduction(
   _producerAddress: string,
   inverterId: string,
   kwhProduced: number,
-  intervalStart: Date,
-  intervalEnd: Date,
+  _intervalStart: Date,
+  _intervalEnd: Date,
   rawDataHash: string,
 ): Promise<SolanaRecordResult> {
-  const { subMint, sreMint } = await getNetworkState();
+  // New program records per UTC day, not per 15-min interval
+  const now = new Date();
+  const utcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dateTs = Math.floor(utcMidnight.getTime() / 1000);
 
-  const inverterIdHash = Array.from(
-    crypto.createHash('sha256').update(inverterId).digest(),
-  );
-  // rawDataHash is a 64-char hex string from sha256; convert to 32-byte array
+  const kwhWhole = Math.max(1, Math.round(kwhProduced));
   const rawDataHashBytes = Array.from(Buffer.from(rawDataHash.padEnd(64, '0'), 'hex'));
 
-  // Solana program uses whole kWh (not kWh×100 like EVM)
-  const kwhWhole = Math.max(1, Math.round(kwhProduced));
-  const startTs = Math.floor(intervalStart.getTime() / 1000);
-  const endTs = Math.floor(intervalEnd.getTime() / 1000);
+  const { sreMint, treasury, ecosystem, team } = await getNetworkState();
+
+  // Each production record gets its own unique SUB token mint
+  const subMintKeypair = Keypair.generate();
 
   const [networkStatePda] = PublicKey.findProgramAddressSync(
     [Buffer.from('network_state')],
@@ -102,8 +111,7 @@ export async function recordProduction(
     [
       Buffer.from('production'),
       keypair.publicKey.toBuffer(),
-      Buffer.from(inverterIdHash),
-      new BN(startTs).toArrayLike(Buffer, 'le', 8),
+      new BN(dateTs).toArrayLike(Buffer, 'le', 8),
     ],
     PROGRAM_ID,
   );
@@ -112,43 +120,72 @@ export async function recordProduction(
     PROGRAM_ID,
   );
 
-  // Ensure ATAs exist (creates them if not)
-  const producerSubAccount = await getOrCreateAssociatedTokenAccount(
-    connection,
-    keypair,
-    subMint,
-    keypair.publicKey,
-  );
-  const producerSreAccount = await getOrCreateAssociatedTokenAccount(
-    connection,
-    keypair,
-    sreMint,
+  // Producer's ATA for the new unique SUB mint (program creates it via CPI)
+  const producerSubAta = await getAssociatedTokenAddress(
+    subMintKeypair.publicKey,
     keypair.publicKey,
   );
 
+  // Ensure SRE ATAs exist for producer and protocol wallets
+  const producerSreAccount = await getOrCreateAssociatedTokenAccount(
+    connection, keypair, sreMint, keypair.publicKey,
+  );
+  const treasurySreAta = await getOrCreateAssociatedTokenAccount(
+    connection, keypair, sreMint, treasury,
+  );
+  const ecosystemSreAta = await getOrCreateAssociatedTokenAccount(
+    connection, keypair, sreMint, ecosystem,
+  );
+  const teamSreAta = await getOrCreateAssociatedTokenAccount(
+    connection, keypair, sreMint, team,
+  );
+
+  console.log('[solana] recordProduction accounts:', {
+    producer: keypair.publicKey.toBase58(),
+    networkState: networkStatePda.toBase58(),
+    subMint: subMintKeypair.publicKey.toBase58(),
+    producerSubAta: producerSubAta.toBase58(),
+    sreMint: sreMint.toBase58(),
+    producerSreAta: producerSreAccount.address.toBase58(),
+    treasurySreAta: treasurySreAta.address.toBase58(),
+    ecosystemSreAta: ecosystemSreAta.address.toBase58(),
+    teamSreAta: teamSreAta.address.toBase58(),
+    productionRecord: productionRecordPda.toBase58(),
+    producerRecord: producerRecordPda.toBase58(),
+  });
+  console.log('[solana] recordProduction args:', {
+    dateTs,
+    inverterId,
+    kwhWhole,
+    emissionFactor: EMISSION_FACTOR,
+  });
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const methods = (program as any).methods;
-  const txSig = await methods
+  const txSig = await (program as any).methods
     .recordProduction(
-      inverterIdHash,
-      new BN(startTs),
+      new BN(dateTs),
+      inverterId,
       new BN(kwhWhole),
-      new BN(endTs),
+      new BN(EMISSION_FACTOR),
       rawDataHashBytes,
     )
     .accounts({
       producer: keypair.publicKey,
       networkState: networkStatePda,
+      subMint: subMintKeypair.publicKey,
+      producerSubAta,
+      sreMint,
+      producerSreAta: producerSreAccount.address,
+      treasurySreAta: treasurySreAta.address,
+      ecosystemSreAta: ecosystemSreAta.address,
+      teamSreAta: teamSreAta.address,
       productionRecord: productionRecordPda,
       producerRecord: producerRecordPda,
-      subMint,
-      sreMint,
-      producerSubAccount: producerSubAccount.address,
-      producerSreAccount: producerSreAccount.address,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
+    .signers([subMintKeypair])
     .preInstructions([
       ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }),
     ])
@@ -156,35 +193,23 @@ export async function recordProduction(
 
   await connection.confirmTransaction(txSig, 'confirmed');
 
-  // Read exact amounts from the production record PDA
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recordData = await (program.account as any).productionRecord.fetch(productionRecordPda) as any;
-  const subMintedRaw: BN = recordData.subMinted;   // SUB has 0 decimals
-  const sreMintedRaw: BN = recordData.sreMinted;   // SRE has 9 decimals
+  const sreMintedRaw: BN = recordData.sreMinted;
 
   return {
     txSignature: txSig,
-    subMinted: subMintedRaw.toString(),
+    subMinted: kwhWhole.toString(), // 1 SUB token per kWh in the unique mint
     sreMinted: (sreMintedRaw.toNumber() / 1e9).toFixed(9),
   };
 }
 
 export async function getBalances(_address: string): Promise<{ sub: string; sre: string }> {
   try {
-    const { subMint, sreMint } = await getNetworkState();
+    const { sreMint } = await getNetworkState();
 
-    const subAta = await getAssociatedTokenAddress(subMint, keypair.publicKey);
     const sreAta = await getAssociatedTokenAddress(sreMint, keypair.publicKey);
-
-    let subBalance = '0';
     let sreBalance = '0';
-
-    try {
-      const subAccount = await getAccount(connection, subAta);
-      subBalance = subAccount.amount.toString();
-    } catch {
-      // ATA doesn't exist yet
-    }
 
     try {
       const sreAccount = await getAccount(connection, sreAta);
@@ -193,7 +218,8 @@ export async function getBalances(_address: string): Promise<{ sub: string; sre:
       // ATA doesn't exist yet
     }
 
-    return { sub: subBalance, sre: sreBalance };
+    // New program issues unique per-day SUB mints — no single global SUB balance
+    return { sub: '0', sre: sreBalance };
   } catch (err) {
     console.error('[solana] getBalances error:', err);
     return { sub: '0', sre: '0' };
