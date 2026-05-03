@@ -1,6 +1,7 @@
 import * as anchor from '@coral-xyz/anchor';
 import { BN } from '@coral-xyz/anchor';
 import {
+  ComputeBudgetProgram,
   Connection,
   Keypair,
   PublicKey,
@@ -148,6 +149,10 @@ export async function recordProduction(
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
+    .preInstructions([
+      ComputeBudgetProgram.requestHeapFrame({ bytes: 262144 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }),
+    ])
     .rpc();
 
   await connection.confirmTransaction(txSig, 'confirmed');
