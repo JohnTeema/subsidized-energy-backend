@@ -79,6 +79,7 @@ export async function runPollingCycle(): Promise<SimulateResult[]> {
           inverterId: conn.id,
           userId: conn.userId,
           kwhProduced: reading.kwh_produced,
+          readingType: 'snapshot',
           intervalStart,
           intervalEnd,
           rawDataHash: reading.raw_hash,
@@ -155,8 +156,9 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
         continue;
       }
 
-      const totalKwh = readings.reduce((sum, r) => sum + r.kwhProduced, 0);
-      result.kwhProduced = totalKwh;
+      // epvToday is cumulative — the highest value is the true daily production
+      const dailyKwh = Math.max(...readings.map((r) => r.kwhProduced));
+      result.kwhProduced = dailyKwh;
       result.validated = true;
 
       // Deterministic hash of all today's raw data hashes combined
@@ -169,14 +171,14 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
       const intervalEnd = readings[readings.length - 1].intervalEnd;
 
       console.log(
-        `[scheduler:daily] Recording ${totalKwh.toFixed(3)} kWh on-chain for ${conn.inverterId} ` +
-        `(${readings.length} readings, chains: ${process.env.ACTIVE_CHAINS || 'base,solana'})`,
+        `[scheduler:daily] Recording ${dailyKwh.toFixed(3)} kWh on-chain for ${conn.inverterId} ` +
+        `(MAX of ${readings.length} snapshots, chains: ${process.env.ACTIVE_CHAINS || 'base,solana'})`,
       );
 
       const onChain = await recordProduction(
         conn.user.walletAddress,
         conn.inverterId,
-        totalKwh,
+        dailyKwh,
         intervalStart,
         intervalEnd,
         combinedHash,
@@ -187,11 +189,17 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
       const baseResult = onChain.base;
       const solanaResult = onChain.solana;
 
-      // Tag the most recent reading with on-chain data; others remain as audit trail
-      const latestReading = readings[readings.length - 1];
-      await prisma.energyReading.update({
-        where: { id: latestReading.id },
+      // Create a single authoritative daily_total reading for this day
+      await prisma.energyReading.create({
         data: {
+          inverterId: conn.id,
+          userId: conn.userId,
+          kwhProduced: dailyKwh,
+          readingType: 'daily_total',
+          intervalStart,
+          intervalEnd,
+          rawDataHash: combinedHash,
+          validated: true,
           txHash: baseResult?.txHash ?? solanaResult?.txSignature ?? null,
           onChainRecordId: baseResult?.recordId ?? null,
           subMinted: parseFloat(baseResult?.subMinted ?? solanaResult?.subMinted ?? '0'),

@@ -11,17 +11,31 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       totalInverterConnections,
       activeInverters,
       totalEnergyReadings,
-      totalKwhResult,
       invertersByBrand,
+      kwhRows,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { emailVerified: true } }),
       prisma.inverterConnection.count(),
       prisma.inverterConnection.count({ where: { isActive: true } }),
       prisma.energyReading.count(),
-      prisma.energyReading.aggregate({ _sum: { kwhProduced: true } }),
       prisma.inverterConnection.groupBy({ by: ['brand'], _count: { id: true } }),
+      // SUM of MAX(kwhProduced) per inverter per day — epvToday is cumulative so
+      // the highest snapshot value for a given day is the real production total
+      prisma.$queryRaw<[{ total: number }]>`
+        SELECT COALESCE(SUM(daily_max), 0)::float AS total
+        FROM (
+          SELECT DATE_TRUNC('day', "intervalStart") AS day,
+                 "inverterId",
+                 MAX("kwhProduced") AS daily_max
+          FROM "EnergyReading"
+          WHERE "readingType" = 'snapshot' AND "validated" = true
+          GROUP BY DATE_TRUNC('day', "intervalStart"), "inverterId"
+        ) t
+      `,
     ]);
+
+    const totalKwhProduced = parseFloat((kwhRows[0]?.total ?? 0).toFixed(4));
 
     res.json({
       totalUsers,
@@ -29,7 +43,7 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       totalInverterConnections,
       activeInverters,
       totalEnergyReadings,
-      totalKwhProduced: parseFloat((totalKwhResult._sum.kwhProduced ?? 0).toFixed(4)),
+      totalKwhProduced,
       invertersByBrand: invertersByBrand.map((b) => ({ brand: b.brand, count: b._count.id })),
     });
   } catch (err) {
@@ -103,6 +117,7 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
         select: {
           id: true,
           kwhProduced: true,
+          readingType: true,
           intervalStart: true,
           intervalEnd: true,
           validated: true,
@@ -117,9 +132,28 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
       prisma.energyReading.count(),
     ]);
 
+    // Compute delta per snapshot: difference from the previous snapshot for the
+    // same inverter on the same day (sorted ascending by time). Snapshots store
+    // cumulative epvToday, so the delta is the actual increase since last poll.
+    const prevByInverterDay = new Map<string, number>();
+
+    // Process in chronological order to compute deltas, then reverse for the response
+    const chronological = [...readingsRaw].reverse();
+    const deltaMap = new Map<string, number | null>();
+    for (const r of chronological) {
+      const day = new Date(r.intervalStart).toISOString().split('T')[0];
+      const key = `${r.inverter.inverterId}::${day}`;
+      if (r.readingType === 'snapshot') {
+        const prev = prevByInverterDay.get(key);
+        deltaMap.set(r.id, prev !== undefined ? parseFloat((r.kwhProduced - prev).toFixed(4)) : r.kwhProduced);
+        prevByInverterDay.set(key, r.kwhProduced);
+      } else {
+        deltaMap.set(r.id, null);
+      }
+    }
+
     // Map to frontend EnergyReading shape
     const readings = readingsRaw.map((r) => {
-      // Derive status from validated + validationError
       let status: 'verified' | 'flagged' | 'pending';
       if (r.validated) {
         status = 'verified';
@@ -129,10 +163,7 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
         status = 'pending';
       }
 
-      // Derive CO2 offset — temporary factor (0.5 kg/kWh) until per-plant factor is stored
       const co2Offset = r.kwhProduced * 0.5;
-
-      // Format date as YYYY-MM-DD for date filter compatibility
       const date = new Date(r.intervalStart).toISOString().split('T')[0];
 
       return {
@@ -141,6 +172,8 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
         producerWallet: r.user.walletAddress,
         date,
         kWh: r.kwhProduced,
+        deltaKwh: deltaMap.get(r.id) ?? null,
+        readingType: r.readingType,
         co2Offset,
         subMinted: r.subMinted ?? 0,
         status,

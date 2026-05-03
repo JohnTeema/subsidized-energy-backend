@@ -45,6 +45,7 @@ model EnergyReading {
   inverterId      String
   userId          String
   kwhProduced     Float
+  readingType     String   @default("snapshot")
   intervalStart   DateTime
   intervalEnd     DateTime
   rawDataHash     String

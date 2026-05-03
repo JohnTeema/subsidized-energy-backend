@@ -5,17 +5,27 @@ const router = Router();
 
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const [kwhResult, activeInvertersCount, subResult, sreResult] = await Promise.all([
-      prisma.energyReading.aggregate({ _sum: { kwhProduced: true }, where: { validated: true } }),
+    const [activeInvertersCount, kwhRows] = await Promise.all([
       prisma.inverterConnection.count({ where: { isActive: true } }),
-      prisma.energyReading.aggregate({ _sum: { subMinted: true } }),
-      prisma.energyReading.aggregate({ _sum: { sreMinted: true } }),
+      // SUM of MAX(kwhProduced) per inverter per day — epvToday is cumulative so
+      // the highest snapshot value for a given day is the real production total
+      prisma.$queryRaw<[{ total: number }]>`
+        SELECT COALESCE(SUM(daily_max), 0)::float AS total
+        FROM (
+          SELECT DATE_TRUNC('day', "intervalStart") AS day,
+                 "inverterId",
+                 MAX("kwhProduced") AS daily_max
+          FROM "EnergyReading"
+          WHERE "readingType" = 'snapshot' AND "validated" = true
+          GROUP BY DATE_TRUNC('day', "intervalStart"), "inverterId"
+        ) t
+      `,
     ]);
 
-    const totalKwh = kwhResult._sum.kwhProduced ?? 0;
+    const totalKwh = parseFloat((kwhRows[0]?.total ?? 0).toFixed(4));
 
     res.json({
-      totalKwh: parseFloat(totalKwh.toFixed(4)),
+      totalKwh,
       activeProducers: activeInvertersCount,
       carbonOffset: parseFloat((totalKwh * 0.43).toFixed(2)),
     });
