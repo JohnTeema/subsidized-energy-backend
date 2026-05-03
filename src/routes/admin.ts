@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
+import { getTotalKwhProduced } from '../services/statsService';
 
 const router = Router();
 
@@ -12,7 +13,7 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       activeInverters,
       totalEnergyReadings,
       invertersByBrand,
-      kwhRows,
+      totalSrePointsDistributedRaw,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { inverters: { some: { isActive: true } } } }),
@@ -20,24 +21,12 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       prisma.inverterConnection.count({ where: { isActive: true } }),
       prisma.energyReading.count(),
       prisma.inverterConnection.groupBy({ by: ['brand'], _count: { id: true } }),
-      // SUM of MAX(kwhProduced) per inverter per day — epvToday is cumulative so
-      // the highest snapshot value for a given day is the real production total
-      prisma.$queryRaw<[{ total: number }]>`
-        SELECT COALESCE(SUM(daily_max), 0)::float AS total
-        FROM (
-          SELECT DATE_TRUNC('day', "intervalStart") AS day,
-                 "inverterId",
-                 MAX("kwhProduced") AS daily_max
-          FROM "EnergyReading"
-          WHERE "readingType" = 'snapshot' AND "validated" = true
-          GROUP BY DATE_TRUNC('day', "intervalStart"), "inverterId"
-        ) t
-      `,
+      prisma.user.aggregate({ _sum: { srePoints: true } }),
     ]);
 
-    const totalKwhProduced = parseFloat((kwhRows[0]?.total ?? 0).toFixed(4));
-    const srePointsSum = (await prisma.user.aggregate({ _sum: { srePoints: true } })). _sum;
-    const totalSrePointsDistributed = srePointsSum?.srePoints ?? 0;
+    const totalKwhProduced = await getTotalKwhProduced();
+    const totalSrePointsDistributed = totalSrePointsDistributedRaw._sum?.srePoints ?? 0;
+    const totalCarbonOffset = parseFloat((totalKwhProduced * 0.43).toFixed(2));
 
     res.json({
       totalUsers,
@@ -47,6 +36,7 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       totalEnergyReadings,
       totalKwhProduced,
       totalSrePointsDistributed,
+      totalCarbonOffset,
       invertersByBrand: invertersByBrand.map((b) => ({ brand: b.brand, count: b._count.id })),
     });
   } catch (err) {
