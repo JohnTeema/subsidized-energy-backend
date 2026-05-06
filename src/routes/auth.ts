@@ -112,6 +112,41 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
   res.json({ token, userId: user.id, walletAddress: user.walletAddress });
 });
 
+router.post('/wallet', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { walletAddress } = req.body as { walletAddress?: string };
+
+    if (!walletAddress || !isValidWalletAddress(walletAddress)) {
+      res.status(400).json({ error: 'Valid walletAddress is required' });
+      return;
+    }
+
+    let user = await prisma.user.findUnique({ where: { walletAddress } });
+
+    if (!user) {
+      const email = `wallet-${walletAddress}@wallet.local`;
+      const hashed = await bcrypt.hash(ethers.Wallet.createRandom().privateKey, 10);
+      user = await prisma.user.create({
+        data: {
+          email,
+          password: hashed,
+          walletAddress,
+          emailVerified: true,
+        },
+      });
+    }
+
+    const token = jwt.sign({ userId: user.id, walletAddress: user.walletAddress }, config.jwtSecret, {
+      expiresIn: '7d',
+    });
+
+    res.json({ token, userId: user.id, walletAddress: user.walletAddress });
+  } catch (err) {
+    console.error('[wallet-auth] ERROR:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Optional: verify token and return user info
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const user = await prisma.user.findUnique({
