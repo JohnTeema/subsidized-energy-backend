@@ -2,18 +2,19 @@ import { Router, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { getBalances } from '../services/blockchainRouter';
+import { getUserTotalKwhProduced } from '../services/statsService';
 
 const router = Router();
 
 router.get('/summary', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const chain = req.query.chain as string | undefined;
 
-  const readings = await prisma.energyReading.findMany({
-    where: { userId: req.userId!, validated: true },
-  });
-
-  const totalKwh = readings.reduce((sum, r) => sum + r.kwhProduced, 0);
-  const totalReadings = readings.length;
+  const [totalKwh, totalReadings] = await Promise.all([
+    getUserTotalKwhProduced(req.userId!),
+    prisma.energyReading.count({
+      where: { userId: req.userId!, readingType: 'snapshot', validated: true },
+    }),
+  ]);
 
   let balances: { base?: { sub: string; sre: string }; solana?: { sub: string; sre: string } } = {};
   try {
@@ -92,7 +93,12 @@ router.get('/chart', requireAuth, async (req: AuthRequest, res: Response): Promi
   }
 
   const readings = await prisma.energyReading.findMany({
-    where: { userId: req.userId!, intervalEnd: { gte: since } },
+    where: {
+      userId: req.userId!,
+      readingType: 'snapshot',
+      validated: true,
+      intervalEnd: { gte: since },
+    },
     orderBy: { intervalEnd: 'asc' },
     select: { kwhProduced: true, intervalEnd: true, sreMinted: true },
   });

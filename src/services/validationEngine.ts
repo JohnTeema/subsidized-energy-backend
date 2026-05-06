@@ -17,13 +17,6 @@ export async function validateReading(
 ): Promise<ValidationResult> {
   const now = new Date();
 
-  // Look up the inverter's brand to apply brand-specific validation rules
-  const conn = await prisma.inverterConnection.findUnique({
-    where: { id: inverterId },
-    select: { brand: true },
-  });
-  const brand = conn?.brand ?? 'unknown';
-
   // 1. Timestamp check — interval must not be in the future
   if (reading.intervalEnd.getTime() > now.getTime() + MAX_FUTURE_TOLERANCE_MS) {
     return { valid: false, error: 'Interval end is in the future' };
@@ -51,16 +44,13 @@ export async function validateReading(
   }
 
   // 4. Capacity check — kWh must not exceed system maximum
-  // Growatt returns cumulative daily totals (epvToday), so skip per-interval capacity check
-  if (brand !== 'growatt') {
-    if (reading.kwhProduced > MAX_CAPACITY_KWH_PER_15MIN) {
-      return { valid: false, error: `kWh ${reading.kwhProduced} exceeds max capacity ${MAX_CAPACITY_KWH_PER_15MIN}` };
-    }
+  if (reading.kwhProduced > MAX_CAPACITY_KWH_PER_15MIN) {
+    return { valid: false, error: `kWh ${reading.kwhProduced} exceeds max capacity ${MAX_CAPACITY_KWH_PER_15MIN}` };
   }
 
-  // 5. Non-negative check — production cannot be negative or zero
-  if (reading.kwhProduced <= 0) {
-    return { valid: false, error: 'kWh produced must be greater than zero' };
+  // 5. Non-negative check — production can be zero at night, but never negative
+  if (reading.kwhProduced < 0) {
+    return { valid: false, error: 'kWh produced cannot be negative' };
   }
 
   return { valid: true };

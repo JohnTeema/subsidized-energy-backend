@@ -20,6 +20,78 @@ export interface SimulateResult {
   sreBalance?: string;
 }
 
+async function calculateRecordedKwh(
+  brand: string,
+  inverterConnectionId: string,
+  reading: Awaited<ReturnType<ReturnType<typeof getAdapter>['fetchEnergy']>>,
+): Promise<number> {
+  if (brand !== 'growatt') {
+    return reading.kwh_produced;
+  }
+
+  const currentCumulative =
+    typeof reading.epv_total === 'number' && reading.epv_total > 0
+      ? reading.epv_total
+      : reading.epv_today;
+
+  if (typeof currentCumulative !== 'number') {
+    return reading.kwh_produced;
+  }
+
+  const previous = await prisma.energyReading.findFirst({
+    where: {
+      inverterId: inverterConnectionId,
+      readingType: 'snapshot',
+      validated: true,
+      OR: [
+        { epvTotal: { not: null } },
+        { epvToday: { not: null } },
+      ],
+    },
+    orderBy: { intervalEnd: 'desc' },
+    select: {
+      epvTotal: true,
+      epvToday: true,
+      intervalEnd: true,
+    },
+  });
+
+  if (!previous) {
+    console.log(
+      `[scheduler] Growatt baseline stored for ${inverterConnectionId}; ` +
+      `current cumulative=${currentCumulative.toFixed(4)} kWh, interval delta=0`,
+    );
+    return 0;
+  }
+
+  const previousCumulative =
+    typeof previous.epvTotal === 'number' && previous.epvTotal > 0
+      ? previous.epvTotal
+      : previous.epvToday;
+
+  if (typeof previousCumulative !== 'number') {
+    return 0;
+  }
+
+  let delta = currentCumulative - previousCumulative;
+
+  if (delta < 0) {
+    const sameUtcDay =
+      previous.intervalEnd.toISOString().slice(0, 10) === reading.interval_end.slice(0, 10);
+
+    delta = sameUtcDay ? 0 : (reading.epv_today ?? 0);
+  }
+
+  const recordedKwh = Math.max(0, delta);
+  console.log(
+    `[scheduler] Growatt interval delta for ${inverterConnectionId}: ` +
+    `${recordedKwh.toFixed(4)} kWh ` +
+    `(current=${currentCumulative.toFixed(4)}, previous=${previousCumulative.toFixed(4)})`,
+  );
+
+  return parseFloat(recordedKwh.toFixed(4));
+}
+
 // Polls all active inverters and saves readings to the database.
 // Does NOT write to the blockchain — that happens once per day via runDailyRecording().
 export async function runPollingCycle(): Promise<SimulateResult[]> {
@@ -61,11 +133,13 @@ export async function runPollingCycle(): Promise<SimulateResult[]> {
         intervalEnd,
       );
 
-      result.kwhProduced = reading.kwh_produced;
+      const recordedKwh = await calculateRecordedKwh(conn.brand, conn.id, reading);
+
+      result.kwhProduced = recordedKwh;
 
       const simulatedReading = {
         inverterId: conn.inverterId,
-        kwhProduced: reading.kwh_produced,
+        kwhProduced: recordedKwh,
         intervalStart,
         intervalEnd,
         rawData: { ...reading } as Record<string, unknown>,
@@ -79,7 +153,7 @@ export async function runPollingCycle(): Promise<SimulateResult[]> {
         data: {
           inverterId: conn.id,
           userId: conn.userId,
-          kwhProduced: reading.kwh_produced,
+          kwhProduced: recordedKwh,
           readingType: 'snapshot',
           intervalStart,
           intervalEnd,
@@ -173,9 +247,11 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
       const readings = await prisma.energyReading.findMany({
         where: {
           inverterId: conn.id,
+          readingType: 'snapshot',
           validated: true,
           intervalStart: { gte: todayUtc, lt: todayEnd },
         },
+        orderBy: { intervalStart: 'asc' },
       });
 
       if (readings.length === 0) {
@@ -183,8 +259,13 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
         continue;
       }
 
-      // epvToday is cumulative — the highest value is the true daily production
-      const dailyKwh = Math.max(...readings.map((r) => r.kwhProduced));
+      const dailyKwh = conn.brand === 'growatt'
+        ? Math.max(
+            ...readings.map((r) =>
+              typeof r.epvToday === 'number' && r.epvToday > 0 ? r.epvToday : r.kwhProduced,
+            ),
+          )
+        : readings.reduce((sum, r) => sum + r.kwhProduced, 0);
       result.kwhProduced = dailyKwh;
       result.validated = true;
 
@@ -199,7 +280,8 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
 
       console.log(
         `[scheduler:daily] Recording ${dailyKwh.toFixed(3)} kWh on-chain for ${conn.inverterId} ` +
-        `(MAX of ${readings.length} snapshots, chains: ${process.env.ACTIVE_CHAINS || 'base,solana'})`,
+        `(${conn.brand === 'growatt' ? 'MAX cumulative Growatt snapshot' : 'SUM of interval snapshots'} ` +
+        `from ${readings.length} readings, chains: ${process.env.ACTIVE_CHAINS || 'base,solana'})`,
       );
 
       const onChain = await recordProduction(

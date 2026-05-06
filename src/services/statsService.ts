@@ -1,20 +1,25 @@
 import prisma from '../db/client';
 
 /**
- * Platform-wide total kWh: sum of daily max(kwhProduced) per inverter per day.
+ * Platform-wide total kWh: sum of daily production per inverter per day.
  * Canonical source of truth for all kWh statistics.
  */
 export async function getTotalKwhProduced(): Promise<number> {
   try {
     const result = await prisma.$queryRaw<[{ total: number }]>`
-      SELECT COALESCE(SUM(daily_max), 0)::float AS total
+      SELECT COALESCE(SUM(daily_kwh), 0)::float AS total
       FROM (
-        SELECT DATE_TRUNC('day', "intervalStart") AS day,
-               "inverterId",
-               MAX("kwhProduced") AS daily_max
-        FROM "EnergyReading"
-        WHERE "readingType" = 'snapshot' AND "validated" = true
-        GROUP BY DATE_TRUNC('day', "intervalStart"), "inverterId"
+        SELECT DATE_TRUNC('day', er."intervalStart") AS day,
+               er."inverterId",
+               CASE
+                 WHEN MAX(ic."brand") = 'growatt'
+                   THEN COALESCE(MAX(er."epvToday"), MAX(er."kwhProduced"), 0)
+                 ELSE SUM(er."kwhProduced")
+               END AS daily_kwh
+        FROM "EnergyReading" er
+        JOIN "InverterConnection" ic ON ic."id" = er."inverterId"
+        WHERE er."readingType" = 'snapshot' AND er."validated" = true
+        GROUP BY DATE_TRUNC('day', er."intervalStart"), er."inverterId"
       ) t
     `;
     const total = parseFloat((result[0]?.total ?? 0).toFixed(4));
@@ -27,20 +32,26 @@ export async function getTotalKwhProduced(): Promise<number> {
 }
 
 /**
- * Per-user total kWh: sum of daily max(kwhProduced) for this user's inverters.
+ * Per-user total kWh: sum of daily production for this user's inverters.
  */
 export async function getUserTotalKwhProduced(userId: string): Promise<number> {
   try {
     const result = await prisma.$queryRaw<[{ total: number }]>`
-      SELECT COALESCE(SUM(daily_max), 0)::float AS total
+      SELECT COALESCE(SUM(daily_kwh), 0)::float AS total
       FROM (
-        SELECT DATE_TRUNC('day', "intervalStart") AS day,
-               MAX("kwhProduced") AS daily_max
-        FROM "EnergyReading"
-        WHERE "readingType" = 'snapshot'
-          AND "validated" = true
-          AND "userId" = ${userId}
-        GROUP BY DATE_TRUNC('day', "intervalStart")
+        SELECT DATE_TRUNC('day', er."intervalStart") AS day,
+               er."inverterId",
+               CASE
+                 WHEN MAX(ic."brand") = 'growatt'
+                   THEN COALESCE(MAX(er."epvToday"), MAX(er."kwhProduced"), 0)
+                 ELSE SUM(er."kwhProduced")
+               END AS daily_kwh
+        FROM "EnergyReading" er
+        JOIN "InverterConnection" ic ON ic."id" = er."inverterId"
+        WHERE er."readingType" = 'snapshot'
+          AND er."validated" = true
+          AND er."userId" = ${userId}
+        GROUP BY DATE_TRUNC('day', er."intervalStart"), er."inverterId"
       ) t
     `;
     return parseFloat((result[0]?.total ?? 0).toFixed(4));
@@ -51,26 +62,36 @@ export async function getUserTotalKwhProduced(userId: string): Promise<number> {
 }
 
 /**
- * Per-user daily readings for chart: last N days of daily max(kwhProduced).
+ * Per-user daily readings for chart: last N days of daily production.
  */
 export async function getUserDailyReadings(userId: string, days: number = 30): Promise<{ time: string; kwh: number }[]> {
   try {
     const raw = await prisma.$queryRaw<
-      { day: string; daily_max: number }[]
+      { day: string; daily_kwh: number }[]
     >`
-      SELECT DATE_TRUNC('day', "intervalStart") AS day,
-             MAX("kwhProduced") AS daily_max
-      FROM "EnergyReading"
-      WHERE "readingType" = 'snapshot'
-        AND "validated" = true
-        AND "userId" = ${userId}
-        AND "intervalStart" >= NOW() - INTERVAL '${days} days'
-      GROUP BY DATE_TRUNC('day', "intervalStart")
+      SELECT day, COALESCE(SUM(inverter_daily_kwh), 0)::float AS daily_kwh
+      FROM (
+        SELECT DATE_TRUNC('day', er."intervalStart") AS day,
+               er."inverterId",
+               CASE
+                 WHEN MAX(ic."brand") = 'growatt'
+                   THEN COALESCE(MAX(er."epvToday"), MAX(er."kwhProduced"), 0)
+                 ELSE SUM(er."kwhProduced")
+               END AS inverter_daily_kwh
+        FROM "EnergyReading" er
+        JOIN "InverterConnection" ic ON ic."id" = er."inverterId"
+        WHERE er."readingType" = 'snapshot'
+          AND er."validated" = true
+          AND er."userId" = ${userId}
+          AND er."intervalStart" >= NOW() - INTERVAL '${days} days'
+        GROUP BY DATE_TRUNC('day', er."intervalStart"), er."inverterId"
+      ) t
+      GROUP BY day
       ORDER BY day ASC
     `;
     return raw.map((r) => ({
       time: new Date(r.day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      kwh: parseFloat(r.daily_max.toFixed(4)),
+      kwh: parseFloat(r.daily_kwh.toFixed(4)),
     }));
   } catch (err) {
     console.error('[stats] Error calculating user daily readings:', err);

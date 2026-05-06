@@ -126,26 +126,6 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
       prisma.energyReading.count(),
     ]);
 
-    // Compute delta per snapshot: difference from the previous snapshot for the
-    // same inverter on the same day (sorted ascending by time). Snapshots store
-    // cumulative epvToday, so the delta is the actual increase since last poll.
-    const prevByInverterDay = new Map<string, number>();
-
-    // Process in chronological order to compute deltas, then reverse for the response
-    const chronological = [...readingsRaw].reverse();
-    const deltaMap = new Map<string, number | null>();
-    for (const r of chronological) {
-      const day = new Date(r.intervalStart).toISOString().split('T')[0];
-      const key = `${r.inverter.inverterId}::${day}`;
-      if (r.readingType === 'snapshot') {
-        const prev = prevByInverterDay.get(key);
-        deltaMap.set(r.id, prev !== undefined ? parseFloat((r.kwhProduced - prev).toFixed(4)) : r.kwhProduced);
-        prevByInverterDay.set(key, r.kwhProduced);
-      } else {
-        deltaMap.set(r.id, null);
-      }
-    }
-
     // Map to frontend EnergyReading shape
     const readings = readingsRaw.map((r) => {
       let status: 'verified' | 'flagged' | 'pending';
@@ -166,7 +146,7 @@ router.get('/energy', async (req: Request, res: Response): Promise<void> => {
         producerWallet: r.user.walletAddress,
         date,
         kWh: r.kwhProduced,
-        deltaKwh: deltaMap.get(r.id) ?? null,
+        deltaKwh: r.readingType === 'snapshot' ? r.kwhProduced : null,
         readingType: r.readingType,
         co2Offset,
         subMinted: r.subMinted ?? 0,
