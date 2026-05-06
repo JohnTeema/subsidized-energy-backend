@@ -22,4 +22,5 @@ export const config = {
   },
 
   activeChains: (process.env.ACTIVE_CHAINS || 'base,solana').split(',').map(s => s.trim()) as Array<'base' | 'solana'>,
+  allowMockInverters: process.env.ALLOW_MOCK_INVERTERS === 'true',
 };

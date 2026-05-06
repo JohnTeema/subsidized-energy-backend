@@ -5,6 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { getAdapter, SUPPORTED_BRANDS, BRAND_CREDENTIAL_FIELDS } from '../adapters';
 import { encryptCredentials } from '../utils/credentialsCrypto';
 import { awardSrePoints } from '../services/srePointsService';
+import { config } from '../config/env';
 
 const router = Router();
 
@@ -31,10 +32,16 @@ router.post('/connect', requireAuth, async (req: AuthRequest, res: Response): Pr
     });
     return;
   }
+  if (brand === 'mock' && !config.allowMockInverters) {
+    res.status(400).json({ error: 'Mock inverter connections are disabled in production' });
+    return;
+  }
 
   // Validate required credential fields
   const fields = BRAND_CREDENTIAL_FIELDS[brand as keyof typeof BRAND_CREDENTIAL_FIELDS] ?? [];
-  const missing = fields.filter(f => !credentials[f.field]).map(f => f.field);
+  const missing = fields
+    .filter(f => typeof credentials[f.field] !== 'string' || credentials[f.field].trim().length === 0)
+    .map(f => f.field);
   if (missing.length > 0) {
     res.status(400).json({ error: `Missing required credentials: ${missing.join(', ')}` });
     return;
@@ -105,6 +112,18 @@ router.post('/test-connection', requireAuth, async (req: AuthRequest, res: Respo
     res.status(400).json({ error: 'brand and credentials are required' });
     return;
   }
+  if (!SUPPORTED_BRANDS.includes(brand as never)) {
+    res.status(400).json({
+      success: false,
+      message: `Unsupported brand: "${brand}"`,
+      supported: SUPPORTED_BRANDS.filter((b) => config.allowMockInverters || b !== 'mock'),
+    });
+    return;
+  }
+  if (brand === 'mock' && !config.allowMockInverters) {
+    res.status(400).json({ success: false, message: 'Mock inverter connections are disabled in production' });
+    return;
+  }
 
   try {
     const adapter = getAdapter(brand);
@@ -131,7 +150,7 @@ router.get('/status', requireAuth, async (req: AuthRequest, res: Response): Prom
 });
 
 router.get('/brands', (_req, res: Response): void => {
-  const brands = SUPPORTED_BRANDS.map(brand => ({
+  const brands = SUPPORTED_BRANDS.filter((brand) => config.allowMockInverters || brand !== 'mock').map(brand => ({
     brand,
     credentialFields: BRAND_CREDENTIAL_FIELDS[brand],
   }));

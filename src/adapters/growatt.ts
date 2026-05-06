@@ -298,8 +298,26 @@ incrementCallCount(username, 1);
 if (loginResult.errCode && loginResult.errCode !== 0) {
 return { success: false, message: `Login failed: ${loginResult.errMsg ?? loginResult.errCode}` };
 }
-try { await growatt.logout(loginResult.userId ?? ''); } catch { /* ignore */ }
+try {
+const plants = await growatt.getAllPlantData({ plantData: true, deviceData: false, weather: false });
+incrementCallCount(username, 1);
+const plantIds = Object.keys(plants ?? {});
+if (plantIds.length === 0) {
+return { success: false, message: 'Growatt connection failed: no plants found for this account' };
+}
+
+const hasDevice = plantIds.some((plantId) => {
+const devices = plants[plantId]?.devices;
+return devices && Object.keys(devices).length > 0;
+});
+if (!hasDevice) {
+return { success: false, message: 'Growatt connection failed: no inverter or storage devices found' };
+}
+
 return { success: true, message: 'Growatt connection verified' };
+} finally {
+try { await growatt.logout(loginResult.userId ?? ''); } catch { /* ignore */ }
+}
 } catch (err) {
 const e = err as AxiosError;
 console.error('[Growatt] testConnection threw:', e.message, '| status:', e.response?.status, '| body:', JSON.stringify(e.response?.data ?? null));
