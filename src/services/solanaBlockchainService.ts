@@ -90,6 +90,9 @@ export async function recordProduction(
   _intervalEnd: Date,
   rawDataHash: string,
 ): Promise<SolanaRecordResult> {
+  // Anchor program field is bounded — use only the last 8 chars (the unique UUID suffix)
+  const shortInverterId = inverterId.slice(-8);
+
   // New program records per UTC day, not per 15-min interval
   const now = new Date();
   const utcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -155,7 +158,7 @@ export async function recordProduction(
   });
   console.log('[solana] recordProduction args:', {
     dateTs,
-    inverterId,
+    inverterId: shortInverterId,
     kwhWhole,
     emissionFactor: EMISSION_FACTOR,
   });
@@ -164,7 +167,7 @@ export async function recordProduction(
   const txSig = await (program as any).methods
     .recordProduction(
       new BN(dateTs),
-      inverterId,
+      shortInverterId,
       new BN(kwhWhole),
       new BN(EMISSION_FACTOR),
       rawDataHashBytes,
