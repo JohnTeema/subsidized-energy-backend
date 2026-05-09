@@ -293,10 +293,24 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
         combinedHash,
       );
 
-      console.log(`[scheduler:daily] Recorded on chains: [${onChain.chains.join(', ')}]`);
-
-      const baseResult = onChain.base;
       const solanaResult = onChain.solana;
+      const baseResult = onChain.base;
+
+      console.log(`[scheduler:daily] Chains attempted: [${process.env.ACTIVE_CHAINS || 'base,solana'}]`);
+      console.log(`[scheduler:daily] Chains recorded:  [${onChain.chains.join(', ') || 'NONE'}]`);
+      if (solanaResult) {
+        console.log(`[scheduler:daily] Solana tx sig: ${solanaResult.txSignature}`);
+      }
+      if (Object.keys(onChain.errors).length > 0) {
+        console.error(`[scheduler:daily] Chain errors:`, onChain.errors);
+      }
+
+      if (onChain.chains.length === 0) {
+        const errorSummary = Object.entries(onChain.errors)
+          .map(([chain, msg]) => `${chain}: ${msg}`)
+          .join('; ');
+        throw new Error(`All blockchain chains failed — ${errorSummary || 'unknown error'}`);
+      }
 
       // Create a single authoritative daily_total reading for this day
       await prisma.energyReading.create({

@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { runSimulationCycle, runDailyRecording } from '../services/schedulerService';
+import { getSolanaWalletAddress } from '../services/solanaBlockchainService';
+import { config } from '../config/env';
 
 const router = Router();
 
@@ -31,6 +33,22 @@ router.post('/record-daily', async (_req: Request, res: Response): Promise<void>
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });
   }
+});
+
+/**
+ * GET /api/dev/solana-status
+ * Reports whether the Solana blockchain service is initialized and ready.
+ */
+router.get('/solana-status', (_req: Request, res: Response): void => {
+  const walletAddress = getSolanaWalletAddress();
+  const initialized = walletAddress.length > 0;
+  res.json({
+    initialized,
+    walletAddress: initialized ? walletAddress : null,
+    activeChains: config.activeChains,
+    solanaRpcUrl: config.solana.rpcUrl,
+    privateKeySet: config.solana.privateKey.length > 0,
+  });
 });
 
 export default router;

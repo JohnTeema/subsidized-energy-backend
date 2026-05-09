@@ -8,6 +8,7 @@ export interface RouterRecordResult {
   base?: RecordResult;
   solana?: SolanaRecordResult;
   chains: string[];
+  errors: Record<string, string>;
 }
 
 export interface RouterBalances {
@@ -25,7 +26,7 @@ export async function recordProduction(
   chains?: string[],
 ): Promise<RouterRecordResult> {
   const activeChains = chains ?? config.activeChains;
-  const result: RouterRecordResult = { chains: [] };
+  const result: RouterRecordResult = { chains: [], errors: {} };
 
   const tasks: Promise<void>[] = [];
 
@@ -39,7 +40,9 @@ export async function recordProduction(
           console.log(`[router] Base: tx=${r.txHash} sub=${r.subMinted} sre=${r.sreMinted}`);
         })
         .catch(err => {
-          console.error(`[router] Base recordProduction failed: ${err instanceof Error ? err.message : err}`);
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[router] Base recordProduction FAILED: ${msg}`);
+          result.errors['base'] = msg;
         }),
     );
   }
@@ -51,10 +54,12 @@ export async function recordProduction(
         .then(r => {
           result.solana = r;
           result.chains.push('solana');
-          console.log(`[router] Solana: sig=${r.txSignature} sub=${r.subMinted} sre=${r.sreMinted}`);
+          console.log(`[router] Solana SUCCESS: sig=${r.txSignature} sub=${r.subMinted} sre=${r.sreMinted}`);
         })
         .catch(err => {
-          console.error(`[router] Solana recordProduction failed: ${err instanceof Error ? err.message : err}`);
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[router] Solana recordProduction FAILED: ${msg}`);
+          result.errors['solana'] = msg;
         }),
     );
   }
