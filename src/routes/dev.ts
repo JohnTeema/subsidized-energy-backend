@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { runSimulationCycle, runDailyRecording } from '../services/schedulerService';
 import { getSolanaWalletAddress } from '../services/solanaBlockchainService';
 import { config } from '../config/env';
+import prisma from '../db/client';
 
 const router = Router();
 
@@ -33,6 +34,35 @@ router.post('/record-daily', async (_req: Request, res: Response): Promise<void>
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });
   }
+});
+
+/**
+ * POST /api/dev/reset-daily-lock
+ * Clears lastRecordedDate so daily recording can re-run. Dev/testing only.
+ */
+router.post('/reset-daily-lock', async (req: Request, res: Response): Promise<void> => {
+  const { userId, inverterId, brand } = req.body as {
+    userId?: string;
+    inverterId?: string;
+    brand?: string;
+  };
+
+  const where: Record<string, unknown> = {};
+  if (userId) where['userId'] = userId;
+  if (inverterId) where['inverterId'] = inverterId;
+  if (brand) where['brand'] = brand;
+
+  const { count } = await prisma.inverterConnection.updateMany({
+    where,
+    data: { lastRecordedDate: null },
+  });
+
+  const scope = Object.keys(where).length === 0
+    ? 'all inverters'
+    : Object.entries(where).map(([k, v]) => `${k}=${v}`).join(', ');
+
+  console.log(`[dev] reset-daily-lock cleared ${count} inverter(s) (${scope})`);
+  res.json({ success: true, resetCount: count, message: `Reset lastRecordedDate for ${count} inverter(s)` });
 });
 
 /**
