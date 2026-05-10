@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { getTotalKwhProduced } from '../services/statsService';
-import { reinitNetworkState } from '../services/solanaBlockchainService';
+import { reinitNetworkState, sendSol } from '../services/solanaBlockchainService';
 
 const router = Router();
 
@@ -203,6 +203,35 @@ router.get('/esg-buyers', async (_req: Request, res: Response): Promise<void> =>
   } catch (err) {
     console.error('[admin/esg-buyers] Error:', err);
     res.status(500).json({ error: 'Failed to fetch ESG buyers' });
+  }
+});
+
+/**
+ * POST /api/admin/airdrop-sol
+ * Transfers SOL from the deployer wallet to any Devnet address.
+ * Used to give user wallets enough SOL to appear in Explorer and pay tx fees.
+ */
+router.post('/airdrop-sol', async (req: Request, res: Response): Promise<void> => {
+  const { walletAddress, amount } = req.body as {
+    walletAddress?: string;
+    amount?: number;
+  };
+
+  if (!walletAddress) {
+    res.status(400).json({ success: false, error: 'walletAddress is required' });
+    return;
+  }
+
+  const solAmount = typeof amount === 'number' && amount > 0 ? amount : 0.01;
+
+  try {
+    console.log(`[admin] airdrop-sol: ${solAmount} SOL → ${walletAddress}`);
+    const result = await sendSol(walletAddress, solAmount);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[admin] airdrop-sol failed:', message);
+    res.status(500).json({ success: false, error: message });
   }
 });
 

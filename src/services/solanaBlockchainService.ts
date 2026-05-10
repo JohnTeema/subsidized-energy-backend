@@ -6,6 +6,8 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
@@ -387,6 +389,53 @@ export async function reinitNetworkState(opts?: {
     ecosystem: ecosystem.toBase58(),
     team: team.toBase58(),
     marketplaceProgram: marketplaceProgram.toBase58(),
+  };
+}
+
+export interface SendSolResult {
+  txSignature: string;
+  amount: number;
+  recipient: string;
+  deployerBalance: number;
+}
+
+export async function sendSol(
+  recipientAddress: string,
+  solAmount: number = 0.01,
+): Promise<SendSolResult> {
+  const recipient = new PublicKey(recipientAddress);
+  const lamports = Math.round(solAmount * 1_000_000_000);
+
+  const balanceLamports = await connection.getBalance(keypair.publicKey);
+  const needed = lamports + 5_000; // 5000 lamports covers a typical tx fee
+  if (balanceLamports < needed) {
+    throw new Error(
+      `Deployer balance too low: ${(balanceLamports / 1e9).toFixed(6)} SOL available, ` +
+      `need ${(needed / 1e9).toFixed(6)} SOL (${solAmount} SOL + fee)`,
+    );
+  }
+
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: keypair.publicKey,
+      toPubkey: recipient,
+      lamports,
+    }),
+  );
+
+  const txSig = await sendAndConfirmTransaction(connection, tx, [keypair], {
+    commitment: 'confirmed',
+  });
+
+  console.log(
+    `[solana] sendSol: ${solAmount} SOL → ${recipientAddress} | tx: ${txSig}`,
+  );
+
+  return {
+    txSignature: txSig,
+    amount: solAmount,
+    recipient: recipientAddress,
+    deployerBalance: parseFloat(((balanceLamports - lamports) / 1e9).toFixed(6)),
   };
 }
 
