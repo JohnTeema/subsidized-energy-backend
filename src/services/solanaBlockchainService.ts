@@ -72,13 +72,41 @@ async function getNetworkState(): Promise<{
     [Buffer.from('network_state')],
     PROGRAM_ID,
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const state = await (program.account as any).networkState.fetch(networkStatePda) as any;
+
+  // Read raw bytes directly instead of going through Anchor's IDL decoder.
+  //
+  // The on-chain NetworkState was deployed without the `marketplace_program` field
+  // (old struct = 5 pubkeys; new IDL struct = 6 pubkeys).  Anchor's decoder fails
+  // because it expects 225 bytes of struct data but the account only has ~193.
+  //
+  // The four keys we need sit at fixed offsets that are identical in both layouts:
+  //   offset  0-7  : Anchor discriminator (8 bytes)
+  //   offset  8-39 : authority
+  //   offset 40-71 : sre_mint    ← pubkey 2 — same in old & new layout
+  //   offset 72-103: treasury    ← pubkey 3
+  //   offset 104-135: ecosystem  ← pubkey 4
+  //   offset 136-167: team       ← pubkey 5
+  //
+  // `marketplace_program` was added after team in the new struct, so it doesn't
+  // shift any of the preceding fields.
+  const info = await connection.getAccountInfo(networkStatePda);
+  if (!info) {
+    throw new Error(`NetworkState account not found at ${networkStatePda.toBase58()}`);
+  }
+
+  const data = info.data;
+  if (data.length < 168) {
+    throw new Error(
+      `NetworkState account too small: ${data.length} bytes (need at least 168). ` +
+      `The program may need to be reinitialized.`,
+    );
+  }
+
   return {
-    sreMint: state.sreMint as PublicKey,
-    treasury: state.treasury as PublicKey,
-    ecosystem: state.ecosystem as PublicKey,
-    team: state.team as PublicKey,
+    sreMint:   new PublicKey(data.slice(40,  72)),
+    treasury:  new PublicKey(data.slice(72, 104)),
+    ecosystem: new PublicKey(data.slice(104, 136)),
+    team:      new PublicKey(data.slice(136, 168)),
   };
 }
 
