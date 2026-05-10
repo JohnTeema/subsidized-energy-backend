@@ -82,6 +82,24 @@ async function getNetworkState(): Promise<{
   };
 }
 
+// Wraps an async step with a labeled error that includes the original stack trace.
+async function step<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  console.log(`[solana] >> ${label}`);
+  try {
+    const result = await fn();
+    console.log(`[solana] << ${label} OK`);
+    return result;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack ?? '' : '';
+    console.error(`[solana] << ${label} FAILED: ${msg}`);
+    // Print first 6 stack frames so Railway logs show exactly which lib threw
+    const frames = stack.split('\n').slice(1, 7).join('\n');
+    if (frames) console.error(`[solana]    stack:\n${frames}`);
+    throw new Error(`[${label}] ${msg}`);
+  }
+}
+
 export async function recordProduction(
   _producerAddress: string,
   inverterId: string,
@@ -90,8 +108,9 @@ export async function recordProduction(
   _intervalEnd: Date,
   rawDataHash: string,
 ): Promise<SolanaRecordResult> {
-  // Anchor program field is bounded — use only the last 8 chars (the unique UUID suffix)
-  const shortInverterId = inverterId.slice(-8);
+  // Program accepts up to 64 chars; our stored IDs are "brand-xxxxxxxx" (≤16 chars).
+  // Keep the full ID for on-chain traceability — remove the old 8-char truncation.
+  const safeInverterId = inverterId.slice(0, 64);
 
   // New program records per UTC day, not per 15-min interval
   const now = new Date();
@@ -99,9 +118,27 @@ export async function recordProduction(
   const dateTs = Math.floor(utcMidnight.getTime() / 1000);
 
   const kwhWhole = Math.max(1, Math.round(kwhProduced));
-  const rawDataHashBytes = Array.from(Buffer.from(rawDataHash.padEnd(64, '0'), 'hex'));
 
-  const { sreMint, treasury, ecosystem, team } = await getNetworkState();
+  // Normalise to exactly 32 bytes regardless of what rawDataHash contains.
+  // Buffer.from(hex, 'hex') is the canonical form Anchor's coder expects for [u8;32].
+  const normalised = rawDataHash.replace(/[^0-9a-fA-F]/g, '').padEnd(64, '0').slice(0, 64);
+  const rawDataHashBytes = Buffer.from(normalised, 'hex'); // exactly 32 bytes
+
+  console.log('[solana] recordProduction args:', {
+    inverterId: safeInverterId,
+    inverterId_len: safeInverterId.length,
+    dateTs,
+    kwhWhole,
+    emissionFactor: EMISSION_FACTOR,
+    rawDataHash: normalised.slice(0, 16) + '...',
+    rawDataHashBytes_len: rawDataHashBytes.length,
+  });
+
+  // ── Step 1: fetch network state (sreMint, treasury, ecosystem, team) ──────────
+  const { sreMint, treasury, ecosystem, team } = await step(
+    'getNetworkState',
+    () => getNetworkState(),
+  );
 
   // Each production record gets its own unique SUB token mint
   const subMintKeypair = Keypair.generate();
@@ -129,21 +166,25 @@ export async function recordProduction(
     keypair.publicKey,
   );
 
-  // Ensure SRE ATAs exist for producer and protocol wallets
-  const producerSreAccount = await getOrCreateAssociatedTokenAccount(
-    connection, keypair, sreMint, keypair.publicKey,
+  // ── Step 2–5: ensure SRE ATAs exist ─────────────────────────────────────────
+  const producerSreAccount = await step(
+    'getOrCreateATA(producer-SRE)',
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, keypair.publicKey),
   );
-  const treasurySreAta = await getOrCreateAssociatedTokenAccount(
-    connection, keypair, sreMint, treasury,
+  const treasurySreAta = await step(
+    'getOrCreateATA(treasury-SRE)',
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, treasury),
   );
-  const ecosystemSreAta = await getOrCreateAssociatedTokenAccount(
-    connection, keypair, sreMint, ecosystem,
+  const ecosystemSreAta = await step(
+    'getOrCreateATA(ecosystem-SRE)',
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, ecosystem),
   );
-  const teamSreAta = await getOrCreateAssociatedTokenAccount(
-    connection, keypair, sreMint, team,
+  const teamSreAta = await step(
+    'getOrCreateATA(team-SRE)',
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, team),
   );
 
-  console.log('[solana] recordProduction accounts:', {
+  console.log('[solana] accounts resolved:', {
     producer: keypair.publicKey.toBase58(),
     networkState: networkStatePda.toBase58(),
     subMint: subMintKeypair.publicKey.toBase58(),
@@ -156,53 +197,62 @@ export async function recordProduction(
     productionRecord: productionRecordPda.toBase58(),
     producerRecord: producerRecordPda.toBase58(),
   });
-  console.log('[solana] recordProduction args:', {
-    dateTs,
-    inverterId: shortInverterId,
-    kwhWhole,
-    emissionFactor: EMISSION_FACTOR,
+
+  // ── Step 6: send recordProduction transaction ────────────────────────────────
+  const txSig = await step('recordProduction.rpc()', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (program as any).methods
+      .recordProduction(
+        new BN(dateTs),
+        safeInverterId,
+        new BN(kwhWhole),
+        new BN(EMISSION_FACTOR),
+        rawDataHashBytes,
+      )
+      .accounts({
+        producer: keypair.publicKey,
+        networkState: networkStatePda,
+        subMint: subMintKeypair.publicKey,
+        producerSubAta,
+        sreMint,
+        producerSreAta: producerSreAccount.address,
+        treasurySreAta: treasurySreAta.address,
+        ecosystemSreAta: ecosystemSreAta.address,
+        teamSreAta: teamSreAta.address,
+        productionRecord: productionRecordPda,
+        producerRecord: producerRecordPda,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([subMintKeypair])
+      .preInstructions([
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }),
+      ])
+      .rpc();
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const txSig = await (program as any).methods
-    .recordProduction(
-      new BN(dateTs),
-      shortInverterId,
-      new BN(kwhWhole),
-      new BN(EMISSION_FACTOR),
-      rawDataHashBytes,
-    )
-    .accounts({
-      producer: keypair.publicKey,
-      networkState: networkStatePda,
-      subMint: subMintKeypair.publicKey,
-      producerSubAta,
-      sreMint,
-      producerSreAta: producerSreAccount.address,
-      treasurySreAta: treasurySreAta.address,
-      ecosystemSreAta: ecosystemSreAta.address,
-      teamSreAta: teamSreAta.address,
-      productionRecord: productionRecordPda,
-      producerRecord: producerRecordPda,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-    })
-    .signers([subMintKeypair])
-    .preInstructions([
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }),
-    ])
-    .rpc();
+  console.log(`[solana] tx confirmed pending: ${txSig}`);
 
-  await connection.confirmTransaction(txSig, 'confirmed');
+  // ── Step 7: wait for confirmation ───────────────────────────────────────────
+  await step('confirmTransaction', () =>
+    connection.confirmTransaction(txSig, 'confirmed'),
+  );
 
+  console.log(`[solana] tx confirmed: ${txSig}`);
+
+  // ── Step 8: fetch and decode the production record ───────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recordData = await (program.account as any).productionRecord.fetch(productionRecordPda) as any;
+  const recordData: any = await step('productionRecord.fetch()', () =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (program.account as any).productionRecord.fetch(productionRecordPda),
+  );
+
   const sreMintedRaw: BN = recordData.sreMinted;
 
   return {
     txSignature: txSig,
-    subMinted: kwhWhole.toString(), // 1 SUB token per kWh in the unique mint
+    subMinted: kwhWhole.toString(),
     sreMinted: (sreMintedRaw.toNumber() / 1e9).toFixed(9),
   };
 }
