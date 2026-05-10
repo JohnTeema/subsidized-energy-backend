@@ -199,7 +199,7 @@ export async function recordProduction(
     PROGRAM_ID,
   );
   const [producerRecordPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('producer'), keypair.publicKey.toBuffer()],
+    [Buffer.from('producer_v2'), keypair.publicKey.toBuffer()],
     PROGRAM_ID,
   );
 
