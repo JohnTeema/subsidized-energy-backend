@@ -130,13 +130,16 @@ async function step<T>(label: string, fn: () => Promise<T>): Promise<T> {
     console.log(`[solana] << ${label} OK`);
     return result;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    // Some SPL token errors (e.g. TokenOwnerOffCurveError) set .name but leave .message empty.
+    // Use both so the log line is always informative.
+    const name  = err instanceof Error ? err.name  : '';
+    const msg   = err instanceof Error ? err.message : String(err);
+    const label_msg = name && name !== 'Error' ? `${name}: ${msg}` : (msg || String(err));
     const stack = err instanceof Error ? err.stack ?? '' : '';
-    console.error(`[solana] << ${label} FAILED: ${msg}`);
-    // Print first 6 stack frames so Railway logs show exactly which lib threw
+    console.error(`[solana] << ${label} FAILED: ${label_msg}`);
     const frames = stack.split('\n').slice(1, 7).join('\n');
     if (frames) console.error(`[solana]    stack:\n${frames}`);
-    throw new Error(`[${label}] ${msg}`);
+    throw new Error(`[${label}] ${label_msg}`);
   }
 }
 
@@ -207,21 +210,32 @@ export async function recordProduction(
   );
 
   // ── Step 2–5: ensure SRE ATAs exist ─────────────────────────────────────────
+  // Log every wallet + mint before attempting ATA creation so failures are diagnosable.
+  // treasury/ecosystem/team may be PDAs or multisig addresses — allowOwnerOffCurve: true
+  // is required for those; it's harmless for normal wallet addresses.
+  console.log('[solana] ATA targets:', {
+    sreMint: sreMint.toBase58(),
+    producer: { address: keypair.publicKey.toBase58(), isOnCurve: PublicKey.isOnCurve(keypair.publicKey.toBytes()) },
+    treasury: { address: treasury.toBase58(),          isOnCurve: PublicKey.isOnCurve(treasury.toBytes()) },
+    ecosystem: { address: ecosystem.toBase58(),        isOnCurve: PublicKey.isOnCurve(ecosystem.toBytes()) },
+    team: { address: team.toBase58(),                  isOnCurve: PublicKey.isOnCurve(team.toBytes()) },
+  });
+
   const producerSreAccount = await step(
-    'getOrCreateATA(producer-SRE)',
+    `getOrCreateATA(producer-SRE mint=${sreMint.toBase58().slice(0,8)} owner=${keypair.publicKey.toBase58().slice(0,8)})`,
     () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, keypair.publicKey),
   );
   const treasurySreAta = await step(
-    'getOrCreateATA(treasury-SRE)',
-    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, treasury),
+    `getOrCreateATA(treasury-SRE mint=${sreMint.toBase58().slice(0,8)} owner=${treasury.toBase58().slice(0,8)})`,
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, treasury, true),
   );
   const ecosystemSreAta = await step(
-    'getOrCreateATA(ecosystem-SRE)',
-    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, ecosystem),
+    `getOrCreateATA(ecosystem-SRE mint=${sreMint.toBase58().slice(0,8)} owner=${ecosystem.toBase58().slice(0,8)})`,
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, ecosystem, true),
   );
   const teamSreAta = await step(
-    'getOrCreateATA(team-SRE)',
-    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, team),
+    `getOrCreateATA(team-SRE mint=${sreMint.toBase58().slice(0,8)} owner=${team.toBase58().slice(0,8)})`,
+    () => getOrCreateAssociatedTokenAccount(connection, keypair, sreMint, team, true),
   );
 
   console.log('[solana] accounts resolved:', {
