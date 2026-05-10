@@ -259,6 +259,83 @@
       ]
     },
     {
+      "name": "reinitialize_network_state",
+      "docs": [
+        "Resize and rewrite the NetworkState PDA when it was deployed with an older,",
+        "smaller struct (e.g. missing `team` / `marketplace_program` fields).",
+        "Uses UncheckedAccount so Anchor skips Borsh deserialization of the old layout."
+      ],
+      "discriminator": [
+        19,
+        194,
+        12,
+        89,
+        197,
+        136,
+        236,
+        176
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "network_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  101,
+                  116,
+                  119,
+                  111,
+                  114,
+                  107,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "sre_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "treasury",
+          "type": "pubkey"
+        },
+        {
+          "name": "ecosystem",
+          "type": "pubkey"
+        },
+        {
+          "name": "team",
+          "type": "pubkey"
+        },
+        {
+          "name": "marketplace_program",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "update_authority",
       "discriminator": [
         32,

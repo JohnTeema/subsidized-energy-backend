@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { getTotalKwhProduced } from '../services/statsService';
+import { reinitNetworkState } from '../services/solanaBlockchainService';
 
 const router = Router();
 
@@ -179,6 +180,28 @@ router.get('/esg-buyers', async (_req: Request, res: Response): Promise<void> =>
   } catch (err) {
     console.error('[admin/esg-buyers] Error:', err);
     res.status(500).json({ error: 'Failed to fetch ESG buyers' });
+  }
+});
+
+/**
+ * POST /api/admin/reinit-network-state
+ * Resizes and rewrites the NetworkState PDA when it was deployed with an older
+ * (smaller) struct. Reads sre_mint/treasury/ecosystem from the live account;
+ * accepts optional team and marketplaceProgram in the request body.
+ */
+router.post('/reinit-network-state', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { team, marketplaceProgram } = req.body as {
+      team?: string;
+      marketplaceProgram?: string;
+    };
+    console.log('[admin] reinit-network-state requested', { team, marketplaceProgram });
+    const result = await reinitNetworkState({ team, marketplaceProgram });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[admin] reinit-network-state failed:', message);
+    res.status(500).json({ success: false, error: message });
   }
 });
 

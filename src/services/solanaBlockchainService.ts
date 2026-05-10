@@ -95,19 +95,31 @@ async function getNetworkState(): Promise<{
   }
 
   const data = info.data;
-  if (data.length < 168) {
+  if (data.length < 136) {
     throw new Error(
-      `NetworkState account too small: ${data.length} bytes (need at least 168). ` +
+      `NetworkState account too small: ${data.length} bytes (need at least 136). ` +
       `The program may need to be reinitialized.`,
     );
   }
 
-  return {
-    sreMint:   new PublicKey(data.slice(40,  72)),
-    treasury:  new PublicKey(data.slice(72, 104)),
-    ecosystem: new PublicKey(data.slice(104, 136)),
-    team:      new PublicKey(data.slice(136, 168)),
-  };
+  const sreMint   = new PublicKey(data.slice(40,  72));
+  const treasury  = new PublicKey(data.slice(72, 104));
+  const ecosystem = new PublicKey(data.slice(104, 136));
+
+  let team: PublicKey;
+  if (data.length >= 168) {
+    team = new PublicKey(data.slice(136, 168));
+  } else {
+    // Old on-chain layout (137 bytes): `team` field not present — byte 136 is the bump byte.
+    // Use the authority pubkey (bytes 8–39) as a stand-in until the account is reinitialized.
+    console.warn(
+      `[solana] NetworkState is ${data.length} bytes — team field absent. ` +
+      `Using authority as team fallback (call /api/admin/reinit-network-state to fix).`,
+    );
+    team = new PublicKey(data.slice(8, 40));
+  }
+
+  return { sreMint, treasury, ecosystem, team };
 }
 
 // Wraps an async step with a labeled error that includes the original stack trace.
@@ -282,6 +294,85 @@ export async function recordProduction(
     txSignature: txSig,
     subMinted: kwhWhole.toString(),
     sreMinted: (sreMintedRaw.toNumber() / 1e9).toFixed(9),
+  };
+}
+
+export interface ReinitResult {
+  txSignature: string;
+  networkStateAddress: string;
+  sreMint: string;
+  treasury: string;
+  ecosystem: string;
+  team: string;
+  marketplaceProgram: string;
+}
+
+export async function reinitNetworkState(opts?: {
+  team?: string;
+  marketplaceProgram?: string;
+}): Promise<ReinitResult> {
+  const [networkStatePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('network_state')],
+    PROGRAM_ID,
+  );
+
+  // Read the existing values from the current (old) account
+  const info = await connection.getAccountInfo(networkStatePda);
+  if (!info) throw new Error('NetworkState PDA not found on-chain');
+
+  const data = info.data;
+  if (data.length < 136) {
+    throw new Error(`NetworkState account too small to read existing fields: ${data.length} bytes`);
+  }
+
+  const sreMint   = new PublicKey(data.slice(40,  72));
+  const treasury  = new PublicKey(data.slice(72, 104));
+  const ecosystem = new PublicKey(data.slice(104, 136));
+
+  // Use provided values or fall back to sensible defaults
+  const team = opts?.team
+    ? new PublicKey(opts.team)
+    : keypair.publicKey; // authority as stand-in
+  const marketplaceProgram = opts?.marketplaceProgram
+    ? new PublicKey(opts.marketplaceProgram)
+    : SystemProgram.programId;
+
+  console.log('[solana] reinitNetworkState args:', {
+    networkState: networkStatePda.toBase58(),
+    sreMint: sreMint.toBase58(),
+    treasury: treasury.toBase58(),
+    ecosystem: ecosystem.toBase58(),
+    team: team.toBase58(),
+    marketplaceProgram: marketplaceProgram.toBase58(),
+    currentSize: data.length,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const txSig = await (program as any).methods
+    .reinitializeNetworkState(sreMint, treasury, ecosystem, team, marketplaceProgram)
+    .accounts({
+      authority: keypair.publicKey,
+      networkState: networkStatePda,
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+
+  await connection.confirmTransaction(txSig, 'confirmed');
+
+  console.log(`[solana] reinitNetworkState confirmed: ${txSig}`);
+
+  // Verify the account is now the correct size
+  const updated = await connection.getAccountInfo(networkStatePda);
+  console.log(`[solana] NetworkState new size: ${updated?.data.length ?? '?'} bytes`);
+
+  return {
+    txSignature: txSig,
+    networkStateAddress: networkStatePda.toBase58(),
+    sreMint: sreMint.toBase58(),
+    treasury: treasury.toBase58(),
+    ecosystem: ecosystem.toBase58(),
+    team: team.toBase58(),
+    marketplaceProgram: marketplaceProgram.toBase58(),
   };
 }
 
