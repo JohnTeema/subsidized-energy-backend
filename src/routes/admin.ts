@@ -7,6 +7,10 @@ const router = Router();
 
 router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
   try {
+    const now = new Date();
+    const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const weekAgoUtc = new Date(todayUtc.getTime() - 7 * 24 * 60 * 60 * 1000);
+
     const [
       totalUsers,
       totalVerifiedUsers,
@@ -15,6 +19,9 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       totalEnergyReadings,
       invertersByBrand,
       totalSrePointsDistributedRaw,
+      subToday,
+      subWeek,
+      subAllTime,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { inverters: { some: { isActive: true } } } }),
@@ -23,6 +30,19 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       prisma.energyReading.count(),
       prisma.inverterConnection.groupBy({ by: ['brand'], _count: { id: true } }),
       prisma.user.aggregate({ _sum: { srePoints: true } }),
+      // SUB is only written on daily_total records (one per inverter per day)
+      prisma.energyReading.aggregate({
+        where: { readingType: 'daily_total', intervalStart: { gte: todayUtc } },
+        _sum: { subMinted: true },
+      }),
+      prisma.energyReading.aggregate({
+        where: { readingType: 'daily_total', intervalStart: { gte: weekAgoUtc } },
+        _sum: { subMinted: true },
+      }),
+      prisma.energyReading.aggregate({
+        where: { readingType: 'daily_total' },
+        _sum: { subMinted: true },
+      }),
     ]);
 
     const totalKwhProduced = await getTotalKwhProduced();
@@ -38,6 +58,9 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
       totalKwhProduced,
       totalSrePointsDistributed,
       totalCarbonOffset,
+      subMintedToday: subToday._sum.subMinted ?? 0,
+      subMintedWeek: subWeek._sum.subMinted ?? 0,
+      subMintedAllTime: subAllTime._sum.subMinted ?? 0,
       invertersByBrand: invertersByBrand.map((b) => ({ brand: b.brand, count: b._count.id })),
     });
   } catch (err) {
