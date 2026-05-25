@@ -1,20 +1,23 @@
 FROM node:20-slim
 
-# Prisma needs openssl; libatomic1 required by some native addons (growatt, anchor)
-RUN apt-get update -y && apt-get install -y openssl libatomic1 && rm -rf /var/lib/apt/lists/*
+# Build tools for native addons (bigint, growatt, anchor) + openssl for Prisma TLS
+RUN apt-get update -y \
+    && apt-get install -y python3 make g++ build-essential openssl libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY package*.json ./
-# --ignore-scripts skips postinstall so prisma migrate deploy doesn't run
-# before the schema is present or a database is reachable
-RUN npm install --ignore-scripts
-
+# prisma/ must be present before npm install so postinstall (prisma generate) can run
 COPY prisma ./prisma
-RUN npx prisma generate
+
+RUN npm install
 
 COPY . .
 RUN npm run build
+
+# Cap Node heap to stay within Render free tier (512 MB container)
+ENV NODE_OPTIONS=--max-old-space-size=384
 
 EXPOSE 3001
 
