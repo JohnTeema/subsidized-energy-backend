@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { ethers } from 'ethers';
-import { sendVerificationEmail, sendPasswordResetEmail } from '../services/emailService';
+import { sendPasswordResetEmail } from '../services/emailService';
 import prisma from '../db/client';
 import { config } from '../config/env';
 import { AuthRequest, requireAuth } from '../middleware/auth';
@@ -45,37 +45,20 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 
     const hashed = await bcrypt.hash(password, 10);
 
-    // Generate 6-digit verification code (10 min expiry)
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const codeExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
     const user = await prisma.user.create({
       data: {
         email,
         password: hashed,
         walletAddress: wallet,
-        verificationCode,
-        codeExpiresAt,
+        emailVerified: true,
       },
     });
-
-    // Send verification email (non-blocking)
-    try {
-      await sendVerificationEmail(email, verificationCode);
-    } catch (err) {
-      console.error('[verify] Failed to send email:', err);
-    }
 
     const token = jwt.sign({ userId: user.id, walletAddress: user.walletAddress }, config.jwtSecret, {
       expiresIn: '7d',
     });
 
-    res.status(201).json({ 
-      token, 
-      userId: user.id, 
-      walletAddress: user.walletAddress,
-      message: 'Check your email for a verification code',
-    });
+    res.status(201).json({ token, userId: user.id, walletAddress: user.walletAddress });
   } catch (err) {
     console.error('[register] ERROR:', err);
     if (err instanceof Error) {
@@ -162,77 +145,13 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
 
 
 
-// Email verification
-router.post('/verify', async (req: Request, res: Response): Promise<void> => {
-  const { email, code } = req.body;
-
-  if (!email || !code) {
-    res.status(400).json({ error: 'email and code are required' });
-    return;
-  }
-
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    res.status(404).json({ error: 'User not found' });
-    return;
-  }
-
-  if (user.emailVerified) {
-    res.status(200).json({ message: 'Already verified' });
-    return;
-  }
-
-  if (!user.verificationCode || user.verificationCode !== code) {
-    res.status(400).json({ error: 'Invalid verification code' });
-    return;
-  }
-
-  if (!user.codeExpiresAt || new Date() > user.codeExpiresAt) {
-    res.status(400).json({ error: 'Verification code expired' });
-    return;
-  }
-
-  await prisma.user.update({
-    where: { email },
-    data: { emailVerified: true, verificationCode: null, codeExpiresAt: null },
-  });
-
-  res.json({ message: 'Email verified successfully' });
+// Email verification disabled — all accounts auto-verified on signup
+router.post('/verify', (_req: Request, res: Response): void => {
+  res.json({ message: 'Email verified' });
 });
 
-// Resend verification code
-router.post('/resend-code', async (req: Request, res: Response): Promise<void> => {
-  const { email } = req.body;
-
-  if (!email) {
-    res.status(400).json({ error: 'email is required' });
-    return;
-  }
-
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    res.status(404).json({ error: 'User not found' });
-    return;
-  }
-
-  if (user.emailVerified) {
-    res.status(200).json({ message: 'Already verified' });
-    return;
-  }
-
-  // Generate new code (6 digits)
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-  await prisma.user.update({
-    where: { email },
-    data: { verificationCode: code, codeExpiresAt: expiresAt },
-  });
-
-  // TODO: Send email via Resend
-  console.log(`[verify] Code for ${email}: ${code}`);
-
-  res.json({ message: 'Verification code sent' });
+router.post('/resend-code', (_req: Request, res: Response): void => {
+  res.json({ message: 'OK' });
 });
 
 
