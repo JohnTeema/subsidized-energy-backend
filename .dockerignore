@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.*
+*.db
+*.sqlite
+prisma/dev.db
+prisma/dev.db-journal
+.git
+.gitignore
+*.log
+npm-debug.log*
+.DS_Store
+.vscode
+.idea
+README.md
