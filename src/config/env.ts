@@ -21,6 +21,6 @@ export const config = {
     programId: process.env.SOLANA_ENERGY_REGISTRY || 'E93p3yX6mxswv1yBn6gcZvsPCqckyupUVQKuk6YLNyYR',
   },
 
-  activeChains: (process.env.ACTIVE_CHAINS || 'base,solana').split(',').map(s => s.trim()) as Array<'base' | 'solana'>,
+  activeChains: (process.env.ACTIVE_CHAINS || 'solana').split(',').map(s => s.trim()) as Array<'base' | 'solana'>,
   allowMockInverters: process.env.ALLOW_MOCK_INVERTERS === 'true',
 };

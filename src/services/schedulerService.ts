@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { config } from '../config/env';
 import prisma from '../db/client';
 import { validateReading } from './validationEngine';
 import { recordProduction } from './blockchainRouter';
@@ -281,7 +282,7 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
       console.log(
         `[scheduler:daily] Recording ${dailyKwh.toFixed(3)} kWh on-chain for ${conn.inverterId} ` +
         `(${conn.brand === 'growatt' ? 'MAX cumulative Growatt snapshot' : 'SUM of interval snapshots'} ` +
-        `from ${readings.length} readings, chains: ${process.env.ACTIVE_CHAINS || 'base,solana'})`,
+        `from ${readings.length} readings, chains: ${config.activeChains.join(',')})`,
       );
 
       const onChain = await recordProduction(
@@ -296,7 +297,7 @@ export async function runDailyRecording(): Promise<SimulateResult[]> {
       const solanaResult = onChain.solana;
       const baseResult = onChain.base;
 
-      console.log(`[scheduler:daily] Chains attempted: [${process.env.ACTIVE_CHAINS || 'base,solana'}]`);
+      console.log(`[scheduler:daily] Chains attempted: [${config.activeChains.join(', ')}]`);
       console.log(`[scheduler:daily] Chains recorded:  [${onChain.chains.join(', ') || 'NONE'}]`);
       if (solanaResult) {
         console.log(`[scheduler:daily] Solana tx sig: ${solanaResult.txSignature}`);

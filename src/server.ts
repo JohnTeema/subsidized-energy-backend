@@ -1,7 +1,6 @@
 import './config/env';
 import app from './app';
 import { config } from './config/env';
-import { initBlockchain } from './services/blockchainService';
 import { initSolanaBlockchain } from './services/solanaBlockchainService';
 import { startScheduler } from './services/schedulerService';
 import { awardRetroactiveInverterBonuses } from './services/srePointsService';
@@ -17,14 +16,6 @@ async function main() {
     }
   }
 
-  // Initialize blockchain services — but don't crash the server if they fail
-  if (config.activeChains.includes('base')) {
-    try {
-      initBlockchain();
-    } catch (err) {
-      console.error('[server] Base blockchain init failed:', err);
-    }
-  }
   if (config.activeChains.includes('solana')) {
     try {
       initSolanaBlockchain();
