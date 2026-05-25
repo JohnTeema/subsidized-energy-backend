@@ -81,4 +81,37 @@ router.get('/solana-status', (_req: Request, res: Response): void => {
   });
 });
 
+/**
+ * DELETE /api/dev/delete-user
+ * Removes a user and all their related records by email. Dev/testing only.
+ */
+router.delete('/delete-user', async (req: Request, res: Response): Promise<void> => {
+  const { email } = req.body as { email?: string };
+
+  if (!email) {
+    res.status(400).json({ success: false, error: 'email is required' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
+
+    // Delete in FK-safe order: readings → sre logs → inverter connections → user
+    await prisma.energyReading.deleteMany({ where: { userId: user.id } });
+    await prisma.srePointsLog.deleteMany({ where: { userId: user.id } });
+    await prisma.inverterConnection.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } });
+
+    console.log(`[dev] Deleted user ${email} (id=${user.id})`);
+    res.json({ success: true, deleted: email });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
 export default router;
