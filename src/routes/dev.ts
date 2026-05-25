@@ -82,6 +82,31 @@ router.get('/solana-status', (_req: Request, res: Response): void => {
 });
 
 /**
+ * POST /api/dev/delete-user
+ * Removes a user and all their related records by email. Dev/testing only.
+ */
+router.post('/delete-user', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      res.json({ success: false, error: 'User not found' });
+      return;
+    }
+
+    await prisma.srePointsLog.deleteMany({ where: { userId: user.id } });
+    await prisma.energyReading.deleteMany({ where: { userId: user.id } });
+    await prisma.inverterConnection.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } });
+
+    res.json({ success: true, deleted: email });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+/**
  * DELETE /api/dev/delete-user
  * Removes a user and all their related records by email. Dev/testing only.
  */
