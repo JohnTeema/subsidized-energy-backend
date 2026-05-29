@@ -162,7 +162,7 @@ export async function recordProduction(
   const utcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const dateTs = Math.floor(utcMidnight.getTime() / 1000);
 
-  const kwhWhole = Math.max(1, Math.round(kwhProduced));
+  const kwhMetadata = Math.max(1, Math.round(kwhProduced));
 
   // Normalise to exactly 32 bytes regardless of what rawDataHash contains.
   // Buffer.from(hex, 'hex') is the canonical form Anchor's coder expects for [u8;32].
@@ -173,7 +173,7 @@ export async function recordProduction(
     inverterId: safeInverterId,
     inverterId_len: safeInverterId.length,
     dateTs,
-    kwhWhole,
+    kwhMetadata,
     emissionFactor: EMISSION_FACTOR,
     rawDataHash: normalised.slice(0, 16) + '...',
     rawDataHashBytes_len: rawDataHashBytes.length,
@@ -261,7 +261,7 @@ export async function recordProduction(
       .recordProduction(
         new BN(dateTs),
         safeInverterId,
-        new BN(kwhWhole),
+        new BN(kwhMetadata),
         new BN(EMISSION_FACTOR),
         rawDataHashBytes,
       )
@@ -308,7 +308,7 @@ export async function recordProduction(
 
   return {
     txSignature: txSig,
-    subMinted: kwhWhole.toString(),
+    subMinted: '1',
     sreMinted: (sreMintedRaw.toNumber() / 1e9).toFixed(9),
   };
 }
