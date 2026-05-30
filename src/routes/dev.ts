@@ -107,6 +107,24 @@ router.post('/delete-user', async (req: Request, res: Response): Promise<void> =
 });
 
 /**
+ * POST /api/dev/fix-sub-counts
+ * Resets subMinted to 1 on all daily_total records. Dev/testing only.
+ */
+router.post('/fix-sub-counts', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const { count } = await prisma.energyReading.updateMany({
+      where: { readingType: 'daily_total' },
+      data: { subMinted: 1 },
+    });
+    console.log(`[dev] fix-sub-counts updated ${count} daily_total records`);
+    res.json({ success: true, updatedCount: count });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+/**
  * DELETE /api/dev/delete-user
  * Removes a user and all their related records by email. Dev/testing only.
  */
